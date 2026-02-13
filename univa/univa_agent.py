@@ -299,6 +299,19 @@ async def initialize_global_agents() -> ReActSystem:
 
 
 async def main():
+    # CLI logging: write to file, keep console clean.
+    log_dir = Path(__file__).resolve().parent.parent / "logs" / "cli"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "cli.log"
+    root_logger = logging.getLogger()
+    for h in list(root_logger.handlers):
+        root_logger.removeHandler(h)
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+    root_logger.addHandler(file_handler)
+    root_logger.setLevel(logging.INFO)
+    logging.captureWarnings(True)
+
     system = await initialize_global_agents()
     
     try:
@@ -307,6 +320,18 @@ async def main():
             if not is_tty:
                 return s
             return f"\033[{code}m{s}\033[0m"
+
+        async def _spinner(stop_event: asyncio.Event) -> None:
+            if not is_tty:
+                return
+            frames = ["|", "/", "-", "\\"]
+            i = 0
+            while not stop_event.is_set():
+                print(f"\r{_c('waiting ' + frames[i % len(frames)], '2')}", end="", flush=True)
+                i += 1
+                await asyncio.sleep(0.12)
+            # clear line
+            print("\r" + " " * 40 + "\r", end="", flush=True)
 
         def _banner() -> None:
             print(_c("UniVA ReAct CLI", "1;36"))
@@ -347,9 +372,12 @@ async def main():
                         print("  /pad <sec>           set context pad seconds (default 8.0)")
                         print("  /maxseg <n>          set max segments when no window (default 12)")
                         continue
-                    if cmd == "/session" and len(parts) >= 2:
-                        session_id = parts[1]
-                        print(f"session_id set to {session_id}")
+                    if cmd == "/session":
+                        if len(parts) >= 2:
+                            session_id = parts[1]
+                            print(f"session_id set to {session_id}")
+                        else:
+                            print(f"session_id: {session_id}")
                         continue
                     if cmd == "/new":
                         session_id = f"session_{uuid.uuid4().hex[:8]}"
@@ -399,6 +427,9 @@ async def main():
                 
                 # Use stream for CLI feedback
                 print(_c("Output:", "1"))
+                spinner_stop = asyncio.Event()
+                spinner_task = asyncio.create_task(_spinner(spinner_stop))
+                got_content = False
                 async for event in system.execute_task_stream(
                     session_id,
                     input_prompt,
@@ -409,9 +440,18 @@ async def main():
                     max_segments=max_segments,
                 ):
                     if event['type'] == 'content':
+                        if not got_content:
+                            got_content = True
+                            spinner_stop.set()
+                            await spinner_task
                         print(event['content'], end="", flush=True)
                     elif event['type'] == 'error':
+                        spinner_stop.set()
+                        await spinner_task
                         print(f"\nError: {event['content']}")
+                if not spinner_stop.is_set():
+                    spinner_stop.set()
+                    await spinner_task
                 
                 print("\n" + _c("-" * 64, "2"))
 
