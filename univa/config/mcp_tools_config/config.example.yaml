@@ -1,0 +1,30 @@
+# Configuration for mcp_tools (example; copy to config.yaml for local use)
+#
+# Secrets MUST be provided via environment variables / .env:
+# - WAVESPEED_API_KEY
+# - LLM_OPENAI_API_KEY (or OPENAI_API_KEY)
+image_gen:
+  text_to_image: "flux-kontext"
+  image_to_image: "flux-kontext"
+
+video_gen:
+  text_to_video: "seedance"
+  image_to_video: "seedance"
+  frame_to_frame_video: "wan_api"
+  base_output_path: "results/video"
+  if_audio: True
+
+video_understanding:
+  model_path: "/share/project/liangzy/liangzy2/models_cache/Qwen2.5-VL-32B-Instruct"
+  retriever_model_path: "/share/project/liangzy/liangzy2/models_cache/BGE-VL-large"
+
+llm:
+  model: "gpt-5-2025-08-07"
+
+save_service:
+  base_output_path: "results/video"
+  naming_pattern: "{timestamp}_{file_type}_{description}_{index:03d}"
+  cleanup_policy:
+    max_age_days: 30
+    max_size_gb: 100
+

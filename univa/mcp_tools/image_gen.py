@@ -11,11 +11,21 @@ from utils.wavespeed_api import text_to_image_generate, seedream_v4_edit, seedre
 # Load configuration
 # config_path = "config/mcp_tools_config/config.yaml"
 # os.chdir(os.path.dirname(os.path.dirname(__file__)))
-config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config/mcp_tools_config/config.yaml")
-with open(config_path, 'r') as f:
+config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config/mcp_tools_config")
+config_path = os.path.join(config_dir, "config.yaml")
+if not os.path.exists(config_path):
+    config_path = os.path.join(config_dir, "config.example.yaml")
+with open(config_path, "r") as f:
     config = yaml.safe_load(f)
 
 image_gen_config = config.get('image_gen', {})
+
+def _get_wavespeed_api_key() -> str:
+    """API keys must come from environment variables (.env)."""
+    key = os.getenv("WAVESPEED_API_KEY") or ""
+    if not key:
+        raise RuntimeError("Missing WAVESPEED_API_KEY (set it in .env or environment).")
+    return key
 
 # Configure logging
 logger = setup_logger(__name__, "logs/mcp_tools", "image_gen.log")
@@ -42,7 +52,7 @@ def text2image_generate(prompt: str)-> ToolResponse:
     model = image_gen_config.get("text_to_image")
 
     if model == "flux-kontext":
-        api_key = image_gen_config.get("wavespeed_api")
+        api_key = _get_wavespeed_api_key()
         image_url = text_to_image_generate(api_key, prompt)
         _time = datetime.now().strftime("%m%d%H%M%S")
         base_output_path = image_gen_config.get("base_output_path", "results/image")
@@ -83,7 +93,7 @@ def image2image_generate(prompt: str, image_path: str|list[str]):
     model = image_gen_config.get("image_to_image")
     
     if model == "flux-kontext":
-        api_key = image_gen_config.get("wavespeed_api")
+        api_key = _get_wavespeed_api_key()
         res = seedream_v4_edit(api_key, prompt, image_path)
         image_url = res["output_path"]
         _time = datetime.now().strftime("%m%d%H%M%S")
@@ -120,7 +130,7 @@ def sequential_image_gen(prompt: str, images: list[str], images_num: int = 2) ->
               - 'message' (str, optional): A success message.
               - 'error' (str, optional): An error message if the generation failed.
     """
-    api_key = image_gen_config.get("wavespeed_api")
+    api_key = _get_wavespeed_api_key()
     
     try:
         result = seedream_v4_sequential_edit(

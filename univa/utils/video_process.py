@@ -15,13 +15,23 @@ from decord import VideoReader, cpu, DECORDError
 
 
 os.chdir(os.path.dirname(os.path.dirname(__file__)))
-config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config/mcp_tools_config/config.yaml")
+config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config/mcp_tools_config")
+config_path = os.path.join(config_dir, "config.yaml")
+if not os.path.exists(config_path):
+    config_path = os.path.join(config_dir, "config.example.yaml")
 import yaml
-with open(config_path, 'r') as f:
+with open(config_path, "r") as f:
     config = yaml.safe_load(f)
 
 llm_config = config.get('llm', {})
 logger = logging.getLogger(__name__)
+
+def _get_llm_api_key() -> str:
+    """API keys must come from environment variables (.env)."""
+    key = os.getenv("LLM_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
+    if not key:
+        raise RuntimeError("Missing LLM_OPENAI_API_KEY (or OPENAI_API_KEY). Set it in .env or environment.")
+    return key
 
 
 def merge_videos(video_paths: list[str] | str, output_file="merged.mp4", audio_list: list[str] | None = None):
@@ -560,7 +570,7 @@ async def storyboard_generate(user_prompt: str, gentype: str=None) -> dict:
     ]
     
     response = query_openai(
-        api_key=llm_config.get('openai_api_key', None),
+        api_key=_get_llm_api_key(),
         model=llm_config.get('model', 'gpt-5-2025-08-07'),
         messages=messages,
         max_tokens=8192
@@ -640,4 +650,3 @@ def encode_clips_to_base64(clips: List[np.ndarray], image_format: str = "JPEG") 
         all_clips_base64.append(clip_base64_frames)
 
     return all_clips_base64
-

@@ -1,8 +1,7 @@
 import os
-import sys
 import toml
-import json
 import yaml
+from dotenv import load_dotenv
 
 def get_default_config():
     """Get default configuration"""
@@ -27,14 +26,12 @@ def get_default_config():
         # Model configuration for Plan Agent
         "plan_model_provider": "openai",
         "plan_model_id": "gpt-5-2025-08-07",
-        "plan_model_api_key": "",
         "plan_model_base_url": "",
         "plan_model_extra_params": "",
         
         # Model configuration for Act Agent
         "act_model_provider": "openai",
         "act_model_id": "gpt-5-2025-08-07",
-        "act_model_api_key": "",
         "act_model_base_url": "",
         "act_model_extra_params": "",
         
@@ -42,15 +39,22 @@ def get_default_config():
         "proxy_host": "",
         "proxy_port": "",
         
-        # MCP Configuration (Merged from yaml and env)
+        # MCP Configuration (Merged from YAML + environment variables)
         "mcp_config": {}
     }
 
-def load_mcp_config(project_root, env_vars):
+def load_mcp_config(project_root: str) -> dict:
     """
-    Load MCP tools configuration from YAML and override with environment variables.
+    Load MCP tools configuration from YAML and override secrets with environment variables.
+
+    Keys/secrets MUST come from environment variables (typically via .env):
+    - WAVESPEED_API_KEY
+    - LLM_OPENAI_API_KEY (or OPENAI_API_KEY)
     """
-    config_path = os.path.join(project_root, "univa/config/mcp_tools_config/config.yaml")
+    config_dir = os.path.join(project_root, "univa/config/mcp_tools_config")
+    config_path = os.path.join(config_dir, "config.yaml")
+    if not os.path.exists(config_path):
+        config_path = os.path.join(config_dir, "config.example.yaml")
     
     mcp_config = {}
     if os.path.exists(config_path):
@@ -60,8 +64,6 @@ def load_mcp_config(project_root, env_vars):
         except Exception as e:
             print(f"Warning: Failed to load MCP config from {config_path}: {e}")
 
-    # --- Override with Environment Variables ---
-    
     # Helper to safely set nested dict values
     def set_config(section, key, value):
         if value:
@@ -69,27 +71,28 @@ def load_mcp_config(project_root, env_vars):
                 mcp_config[section] = {}
             mcp_config[section][key] = value
 
-    # 1. API Keys
-    wavespeed_key = env_vars.get("WAVESPEED_API_KEY")
+    # --- Override secrets with Environment Variables ---
+    wavespeed_key = os.getenv("WAVESPEED_API_KEY") or ""
     if wavespeed_key:
         for section in ["image_gen", "video_editing", "video_gen", "audio_gen"]:
-            if section in mcp_config or section == "video_gen": # Ensure video_gen exists if key provided
+            # Ensure the section exists if the key is provided.
+            if section in mcp_config:
+                set_config(section, "wavespeed_api", wavespeed_key)
+            elif section == "video_gen":
                 set_config(section, "wavespeed_api", wavespeed_key)
 
-    set_config("llm", "openai_api_key", env_vars.get("LLM_OPENAI_API_KEY"))
-
-    # 2. Local Model Paths
-    set_config("video_understanding", "model_path", env_vars.get("VIDEO_UNDERSTAND_MODEL_PATH"))
-    set_config("video_understanding", "retriever_model_path", env_vars.get("VIDEO_RETRIEVER_MODEL_PATH"))
+    llm_key = os.getenv("LLM_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
+    if llm_key:
+        set_config("llm", "openai_api_key", llm_key)
 
     return mcp_config
 
 def load_config():
     """Load configuration from TOML file or create with defaults if it doesn't exist"""
     app_name = "univa"
-    # toml config file - use Preferences dir on macOS
-    CONFIG_FILE = os.path.expanduser(f"univa/config/mcp_tools_config/config.yaml")
-    # ensure the directory exists
+    # Main app config is TOML (separate from mcp_tools YAML config).
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    CONFIG_FILE = os.path.join(project_root, "univa", "config", "config.toml")
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
 
     # Create default config if file doesn't exist
@@ -112,82 +115,26 @@ def load_config():
         config[file_key] = os.path.expanduser(config[file_key])
         os.makedirs(os.path.dirname(config[file_key]), exist_ok=True)
 
-    # Load model configuration from .env if present (project root .env)
+    # Load .env (secrets only). We intentionally do NOT override model choices from .env.
     try:
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         univa_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         env_candidates = [
             os.path.join(univa_root, ".env"),
             os.path.join(project_root, ".env"),
         ]
         env_path = next((p for p in env_candidates if os.path.exists(p)), None)
-        
-        env_vars = {}
         if env_path:
-            with open(env_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    if "=" in line:
-                        k, v = line.split("=", 1)
-                        env_vars[k.strip()] = v.strip().strip('"').strip("'")
+            load_dotenv(dotenv_path=env_path, override=False)
 
-            # --- Update Core Config from ENV ---
-            
-            # Auth & System
-            if "AUTH_ENABLED" in env_vars:
-                config["auth_enabled"] = env_vars["AUTH_ENABLED"].lower() == "true"
-            if "ADMIN_ACCESS_CODE" in env_vars:
-                config["admin_access_code"] = env_vars["ADMIN_ACCESS_CODE"]
-            if "SESSION_TIMEOUT_MINUTES" in env_vars:
-                config["session_timeout_minutes"] = int(env_vars["SESSION_TIMEOUT_MINUTES"])
-            if "MAX_SESSIONS_PER_USER" in env_vars:
-                config["max_sessions_per_user"] = int(env_vars["MAX_SESSIONS_PER_USER"])
-            
-            # Proxy
-            if "PROXY_HOST" in env_vars: config["proxy_host"] = env_vars["PROXY_HOST"]
-            if "PROXY_PORT" in env_vars: config["proxy_port"] = env_vars["PROXY_PORT"]
+        # Load API keys from environment variables (preferred) with a single fallback OPENAI_API_KEY.
+        openai_key = os.getenv("OPENAI_API_KEY") or ""
+        # Secrets come from environment only (do not read/write secrets to config.toml).
+        config["plan_model_api_key"] = os.getenv("PLAN_MODEL_API_KEY") or openai_key or ""
+        config["act_model_api_key"] = os.getenv("ACT_MODEL_API_KEY") or openai_key or ""
+        config["react_model_api_key"] = os.getenv("REACT_MODEL_API_KEY") or openai_key or ""
 
-            # Helper to get default base URL based on provider
-            def get_default_base_url(provider):
-                p = provider.lower()
-                if p == "openai":
-                    return "https://api.openai.com/v1"
-                if p == "deepseek":
-                    return "https://api.deepseek.com"
-                if p == "dashscope":
-                    return "https://dashscope.aliyuncs.com/compatible-mode/v1"
-                return ""
-
-            # Plan model
-            config["plan_model_provider"] = env_vars.get("PLAN_MODEL_PROVIDER", config.get("plan_model_provider"))
-            config["plan_model_id"] = env_vars.get("PLAN_MODEL_ID", config.get("plan_model_id"))
-            config["plan_model_api_key"] = env_vars.get("PLAN_MODEL_API_KEY", config.get("plan_model_api_key"))
-            
-            plan_base_url = env_vars.get("PLAN_MODEL_BASE_URL", "").strip()
-            if not plan_base_url:
-                plan_base_url = get_default_base_url(config["plan_model_provider"])
-            config["plan_model_base_url"] = plan_base_url
-            
-            plan_extra = env_vars.get("PLAN_MODEL_EXTRA_PARAMS", config.get("plan_model_extra_params", ""))
-            config["plan_model_extra_params"] = plan_extra
-
-            # Act model
-            config["act_model_provider"] = env_vars.get("ACT_MODEL_PROVIDER", config.get("act_model_provider"))
-            config["act_model_id"] = env_vars.get("ACT_MODEL_ID", config.get("act_model_id"))
-            config["act_model_api_key"] = env_vars.get("ACT_MODEL_API_KEY", config.get("act_model_api_key"))
-            
-            act_base_url = env_vars.get("ACT_MODEL_BASE_URL", "").strip()
-            if not act_base_url:
-                act_base_url = get_default_base_url(config["act_model_provider"])
-            config["act_model_base_url"] = act_base_url
-            
-            act_extra = env_vars.get("ACT_MODEL_EXTRA_PARAMS", config.get("act_model_extra_params", ""))
-            config["act_model_extra_params"] = act_extra
-            
-        # --- Load and Merge MCP Config ---
-        config["mcp_config"] = load_mcp_config(project_root, env_vars)
+        # --- Load and Merge MCP Config (YAML + env secrets) ---
+        config["mcp_config"] = load_mcp_config(project_root)
 
     except Exception as e:
         print(f"Error loading configuration: {e}")
@@ -205,6 +152,5 @@ def load_config():
 CONFIG_FILE, config = load_config()
 
 # Initialize auth service
-from auth.auth_service import AuthService
+from ..auth.auth_service import AuthService
 auth_service = AuthService(config['auth_config_file'])
-

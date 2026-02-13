@@ -17,8 +17,11 @@ from utils.query_llm import prepare_multimodal_messages_openai_format, query_ope
 # Load configuration
 # config_path = "config/mcp_tools_config/config.yaml"
 # os.chdir(os.path.dirname(os.path.dirname(__file__)))
-config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config/mcp_tools_config/config.yaml")
-with open(config_path, 'r') as f:
+config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config/mcp_tools_config")
+config_path = os.path.join(config_dir, "config.yaml")
+if not os.path.exists(config_path):
+    config_path = os.path.join(config_dir, "config.example.yaml")
+with open(config_path, "r") as f:
     config = yaml.safe_load(f)
 
 video_understanding_config = config.get('video_understanding', {})
@@ -75,4 +78,3 @@ def vision2text_gen(prompt: str, multimodal_path: str, type: str) -> dict:
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")
-

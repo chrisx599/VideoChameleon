@@ -34,8 +34,7 @@ logger = logging.getLogger(__name__)
 
 def load_prompt(prompt_name: str) -> str:
     prompt_dir = config.get('prompt_dir')
-    # Fallback to local prompts dir if config is missing or points to a non-existent path.
-    if not prompt_dir or not os.path.isdir(prompt_dir):
+    if not prompt_dir:
         prompt_dir = os.path.join(os.path.dirname(__file__), "prompts")
         
     prompt_path = os.path.join(prompt_dir, f"{prompt_name}.txt")
@@ -111,12 +110,22 @@ class ReActAgent:
 
 class ReActSystem:
     def __init__(self, mcp_command: List[str], db_file: str = "video_agent_system"):
-        mcp_tools_path = config.get('mcp_tools_path')
+        mcp_tools_path = config.get('mcp_tools_path') or str(Path(__file__).resolve().parent)
+
+        # Pass through the current environment so MCP tool subprocesses can read API keys
+        # loaded from `.env` (e.g. WAVESPEED_API_KEY, LLM_OPENAI_API_KEY).
+        mcp_env = dict(os.environ)
+        mcp_env.update(
+            {
+                "PYTHONPATH": mcp_tools_path,
+                "CWD": mcp_tools_path,
+            }
+        )
+
         self.mcp_tools = MultiMCPTools(
             commands=mcp_command,
             env={
-                "PYTHONPATH": mcp_tools_path,
-                "CWD": mcp_tools_path
+                **mcp_env
             },
             timeout_seconds=600,
             refresh_connection=True

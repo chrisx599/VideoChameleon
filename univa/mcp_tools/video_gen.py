@@ -13,13 +13,23 @@ from utils.wavespeed_api import text_to_video_generate, image_to_video_generate,
 
 # Load configuration
 os.chdir(os.path.dirname(os.path.dirname(__file__)))
-config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config/mcp_tools_config/config.yaml")
-with open(config_path, 'r') as f:
+config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config/mcp_tools_config")
+config_path = os.path.join(config_dir, "config.yaml")
+if not os.path.exists(config_path):
+    config_path = os.path.join(config_dir, "config.example.yaml")
+with open(config_path, "r") as f:
     config = yaml.safe_load(f)
 
 video_gen_config = config.get('video_gen', {})
 image_gen_config = config.get('image_gen', {})
 # base_output_path = video_gen_config.get('base_output_path', '/share/project/liangzy/liangzy2/UniVideo/generated_videos')
+
+def _get_wavespeed_api_key() -> str:
+    """API keys must come from environment variables (.env)."""
+    key = os.getenv("WAVESPEED_API_KEY") or ""
+    if not key:
+        raise RuntimeError("Missing WAVESPEED_API_KEY (set it in .env or environment).")
+    return key
 
 # Configure logging
 logger = setup_logger(__name__, "logs/mcp_tools", "video_gen.log")
@@ -48,7 +58,7 @@ async def text2video_gen(prompt: str) -> str:
     model = video_gen_config.get("text_to_video")
     
     if model == "seedance":
-        api_key = video_gen_config.get("wavespeed_api")
+        api_key = _get_wavespeed_api_key()
         save_dir = f"results/{datetime.now().strftime('%Y%m%d%H%M%S')}_{prompt[:30].replace(' ', '_')}"
         os.makedirs(save_dir, exist_ok=True)
         _time = datetime.now().strftime("%m%d%H%M%S")
@@ -106,7 +116,7 @@ async def storyvideo_gen(prompt: str) -> ToolResponse:
             char_description = character.get("description")
             refined_char_description = refine_gen_prompt(char_description, media_type="character")
 
-            api_key = image_gen_config.get("wavespeed_api")
+            api_key = _get_wavespeed_api_key()
             image_url = text_to_image_generate(api_key, refined_char_description, aspect_ratio="1:1")
             time = datetime.now().strftime("%m%d%H%M%S")
             image_save_path = f"{save_dir}/{time}_{char_id}.jpg"
@@ -132,7 +142,7 @@ async def storyvideo_gen(prompt: str) -> ToolResponse:
             keyframe_prompt = f"{setting_description} {plot_correspondence} {static_shot_description} {distance}, {angle}, {lens}"
             # refined_keyframe_prompt = refine_gen_prompt(keyframe_prompt, media_type="image")
 
-            api_key = image_gen_config.get("wavespeed_api")
+            api_key = _get_wavespeed_api_key()
             if len(onstage_characters_image_path_list) == 0:
                 image_url = text_to_image_generate(api_key, keyframe_prompt, aspect_ratio="4:3")
             else:
@@ -145,7 +155,7 @@ async def storyvideo_gen(prompt: str) -> ToolResponse:
         # 4.generate video segments based on keyframes
         video_segment_list = []
         for idx, (keyframe_id, keyframe) in enumerate(shots_image_path.items()):
-            api_key = video_gen_config.get("wavespeed_api")
+            api_key = _get_wavespeed_api_key()
 
             setting_description = shots[idx].get("setting_description")
             plot_correspondence = shots[idx].get("plot_correspondence")
@@ -262,7 +272,7 @@ async def entity2video(prompt: str, images: List[str]) -> str:
             lens = shot_perspective_design.get("lens")
 
             keyframe_prompt = f"{setting_description} {plot_correspondence} {static_shot_description} {distance}, {angle}, {lens}"
-            api_key = image_gen_config.get("wavespeed_api")
+            api_key = _get_wavespeed_api_key()
             if len(onstage_characters_image_path_list) == 0:
                 image_url = text_to_image_generate(api_key, keyframe_prompt)
             else:
@@ -275,7 +285,7 @@ async def entity2video(prompt: str, images: List[str]) -> str:
 
         video_segment_list = []
         for idx, (keyframe_id, keyframe) in enumerate(shots_image_path.items()):
-            api_key = video_gen_config.get("wavespeed_api")
+            api_key = _get_wavespeed_api_key()
 
             setting_description = shots[idx].get("setting_description")
             plot_correspondence = shots[idx].get("plot_correspondence")
@@ -329,7 +339,7 @@ async def image2video_gen(prompt: str, image_path: str) -> str:
     model = video_gen_config.get("image_to_video")
     
     if model == "seedance":
-        api_key = video_gen_config.get("wavespeed_api")
+        api_key = _get_wavespeed_api_key()
         save_dir = f"results/{datetime.now().strftime('%Y%m%d%H%M%S')}_{prompt[:30].replace(' ', '_')}"
         os.makedirs(save_dir, exist_ok=True)
         _time = datetime.now().strftime("%m%d%H%M%S")
@@ -399,7 +409,7 @@ async def frame2frame_video_gen(prompt: str, first_frame_path: str, last_frame_p
     model = video_gen_config.get("frame_to_frame_video")
     
     if model == "wan_api":
-        api_key = video_gen_config.get("wavespeed_api")
+        api_key = _get_wavespeed_api_key()
         save_dir = f"results/{datetime.now().strftime('%Y%m%d%H%M%S')}_{prompt[:30].replace(' ', '_')}"
         os.makedirs(save_dir, exist_ok=True)
         _time = datetime.now().strftime("%m%d%H%M%S")
