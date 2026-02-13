@@ -24,7 +24,7 @@ def _init_env():
 
 _init_env()
 
-from univa.univa_agent import PlanActSystem
+from univa.univa_agent import ReActSystem
 
 from univa.config.config import config, auth_service
 from univa.auth.middleware import AuthMiddleware
@@ -52,14 +52,14 @@ app.add_middleware(
     auth_enabled=config.get('auth_enabled', True)
 )
 
-global_plan_act_system: Optional[PlanActSystem] = None
+global_react_system: Optional[ReActSystem] = None
 
 
-async def initialize_global_agents() -> PlanActSystem:
-    global global_plan_act_system
+async def initialize_global_agents() -> ReActSystem:
+    global global_react_system
     
-    if global_plan_act_system:
-        return global_plan_act_system
+    if global_react_system:
+        return global_react_system
     
     config_path = config.get('mcp_servers_config')
     
@@ -86,12 +86,12 @@ async def initialize_global_agents() -> PlanActSystem:
     except Exception as e:
         logger.error(f"Error loading MCP config: {e}")
     
-    global_plan_act_system = PlanActSystem(mcp_command=mcp_commands)
-    await global_plan_act_system.__aenter__()
+    global_react_system = ReActSystem(mcp_command=mcp_commands)
+    await global_react_system.__aenter__()
     
-    logger.info("Global PlanActSystem initialized")
+    logger.info("Global ReActSystem initialized")
     
-    return global_plan_act_system
+    return global_react_system
 
 
 
@@ -152,7 +152,7 @@ async def stream_chat_response(user_id: str, session_id: str, user_prompt: str):
 @app.post("/chat/stream")
 async def chat(request: ChatRequest, req: Request):
     """
-    Unified chat request handling endpoint - using PlanActSystem (streaming)
+    Unified chat request handling endpoint - using ReActSystem (streaming)
 
     Access code is passed via X-Access-Code header (handled by auth middleware)
     Returns a streaming response compatible with Vercel AI SDK
