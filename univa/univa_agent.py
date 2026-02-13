@@ -6,6 +6,7 @@ import traceback
 import uuid
 from pathlib import Path
 from dotenv import load_dotenv
+import inspect
 
 from typing import List, Dict, Any, Optional, AsyncIterator
 from pydantic import BaseModel, Field
@@ -33,8 +34,8 @@ logger = logging.getLogger(__name__)
 
 def load_prompt(prompt_name: str) -> str:
     prompt_dir = config.get('prompt_dir')
-    if not prompt_dir:
-        # Fallback to local prompts dir if config is missing
+    # Fallback to local prompts dir if config is missing or points to a non-existent path.
+    if not prompt_dir or not os.path.isdir(prompt_dir):
         prompt_dir = os.path.join(os.path.dirname(__file__), "prompts")
         
     prompt_path = os.path.join(prompt_dir, f"{prompt_name}.txt")
@@ -100,7 +101,13 @@ class ReActAgent:
         return "\n".join(tools_info) if tools_info else "No tools available"
 
     async def run(self, input_text: str, session_id: str = None, stream: bool = False):
-        return await self.agent.arun(input_text, stream=stream, session_id=session_id)
+        # agno.Agent.arun has a dual API:
+        # - stream=False -> returns an awaitable (coroutine) that yields RunOutput
+        # - stream=True  -> returns an async generator (NOT awaitable)
+        result = self.agent.arun(input_text, stream=stream, session_id=session_id)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
 class ReActSystem:
     def __init__(self, mcp_command: List[str], db_file: str = "video_agent_system"):
