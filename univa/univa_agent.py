@@ -302,8 +302,23 @@ async def main():
     system = await initialize_global_agents()
     
     try:
-        print("ReAct System is ready. You can start inputting tasks (type 'exit' or 'quit' to stop).")
-        print("Commands: /help, /session <id>, /new, /project <id>, /window <t_start> <t_end>, /clearwindow, /pad <sec>, /maxseg <n>")
+        is_tty = os.isatty(0)
+        def _c(s: str, code: str) -> str:
+            if not is_tty:
+                return s
+            return f"\033[{code}m{s}\033[0m"
+
+        def _banner() -> None:
+            print(_c("UniVA ReAct CLI", "1;36"))
+            print(_c("Type /help for commands. Type 'exit' or 'quit' to stop.", "2"))
+            print(_c("-" * 64, "2"))
+
+        def _context_line() -> None:
+            win = f"{t_start},{t_end}" if t_start is not None and t_end is not None else "none"
+            pid = project_id if project_id else "none"
+            print(_c(f"[session={session_id}] [project={pid}] [window={win}] [pad={pad_sec}] [maxseg={max_segments}]", "2"))
+
+        _banner()
         session_id = f"session_{uuid.uuid4().hex[:8]}"
         project_id = None
         t_start = None
@@ -312,7 +327,8 @@ async def main():
         max_segments = 12
         while True:
             try:
-                input_prompt = input("\nUser (please input propmt): ")
+                _context_line()
+                input_prompt = input(_c(">>> ", "1;32"))
                 if input_prompt.lower() in ['exit', 'quit']:
                     break
                 
@@ -322,7 +338,7 @@ async def main():
                     parts = input_prompt.strip().split()
                     cmd = parts[0].lower()
                     if cmd == "/help":
-                        print("Commands:")
+                        print(_c("Commands:", "1"))
                         print("  /session <id>        set session id")
                         print("  /new                 create a new session id")
                         print("  /project <id>        set project id for memory context")
@@ -373,13 +389,16 @@ async def main():
                     print("unknown command, use /help")
                     continue
 
+                print(_c("-" * 64, "2"))
                 print(
-                    f"processing: {input_prompt} ... (session_id: {session_id}, project_id: {project_id}, window: {t_start},{t_end})"
+                    _c(
+                        f"processing: {input_prompt} ... (session_id: {session_id}, project_id: {project_id}, window: {t_start},{t_end})",
+                        "2",
+                    )
                 )
                 
                 # Use stream for CLI feedback
-                print("\n" + "="*60)
-                print("Output:")
+                print(_c("Output:", "1"))
                 async for event in system.execute_task_stream(
                     session_id,
                     input_prompt,
@@ -394,7 +413,7 @@ async def main():
                     elif event['type'] == 'error':
                         print(f"\nError: {event['content']}")
                 
-                print("\n" + "="*60)
+                print("\n" + _c("-" * 64, "2"))
 
             except KeyboardInterrupt:
                 break
