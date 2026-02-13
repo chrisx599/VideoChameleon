@@ -53,3 +53,7 @@ results/
 auth_config.json
 GEMINI.md
 config.yaml
+
+# Per-project memory databases / artifacts (generated locally)
+projects/**
+!projects/README.md

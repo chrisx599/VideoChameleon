@@ -15,6 +15,8 @@ import logging
 from agno.agent import Agent
 from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.db.sqlite import SqliteDb
+from univa.memory.tools import get_memory_tools
+from univa.memory.context import build_memory_context, format_memory_context
 
 def _init_env():
     base = Path(__file__).resolve().parents[1]
@@ -49,6 +51,7 @@ def load_prompt(prompt_name: str) -> str:
 class ReActAgent:
     def __init__(self, mcp_tools: MultiMCPTools, db_file: str = "react_agent.db"):
         self.mcp_tools = mcp_tools
+        self.memory_tools = get_memory_tools()
         
         # Load prompt
         base_instructions = load_prompt("react")
@@ -81,7 +84,7 @@ class ReActAgent:
                 base_url=base_url or None,
                 extra_params=extra_params,
             ),
-            tools=[mcp_tools],
+            tools=[mcp_tools, *self.memory_tools],
             instructions=formatted_instructions,
             # agno>=? uses `db=` (not `storage=`) for persistence.
             db=SqliteDb(db_file=db_file),
@@ -97,6 +100,12 @@ class ReActAgent:
         if hasattr(self.mcp_tools, 'tools') and self.mcp_tools.tools:
             for tool in self.mcp_tools.tools:
                 tools_info.append(f"- {tool.name}: {tool.description}")
+        if self.memory_tools:
+            for tool in self.memory_tools:
+                tool_name = getattr(tool, "__name__", str(tool))
+                tool_doc = (getattr(tool, "__doc__", "") or "").strip().splitlines()
+                tool_desc = tool_doc[0].strip() if tool_doc else ""
+                tools_info.append(f"- {tool_name}: {tool_desc}")
         return "\n".join(tools_info) if tools_info else "No tools available"
 
     async def run(self, input_text: str, session_id: str = None, stream: bool = False):
@@ -132,6 +141,33 @@ class ReActSystem:
         )
         self.db_file = db_file
         self.agent: Optional[ReActAgent] = None
+
+    def _inject_memory_context(
+        self,
+        user_request: str,
+        project_id: Optional[str] = None,
+        t_start: Optional[float] = None,
+        t_end: Optional[float] = None,
+        pad_sec: float = 8.0,
+        max_segments: int = 12,
+    ) -> str:
+        if not project_id:
+            return user_request
+        try:
+            ctx = build_memory_context(
+                project_id=project_id,
+                t_start=t_start,
+                t_end=t_end,
+                pad_sec=pad_sec,
+                max_segments=max_segments,
+            )
+            if not (ctx.get("segments") or ctx.get("entity_states_at_center")):
+                return user_request
+            ctx_text = format_memory_context(ctx)
+            return f"{ctx_text}\n\nUSER_REQUEST:\n{user_request}"
+        except Exception as exc:
+            logger.warning(f"Failed to build memory context for project_id={project_id}: {exc}")
+            return user_request
     
     async def __aenter__(self):
         await self.mcp_tools.connect()
@@ -141,18 +177,44 @@ class ReActSystem:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.mcp_tools.close()
     
-    async def execute_task(self, session_id: str, user_request: str) -> Dict[str, Any]:
+    async def execute_task(
+        self,
+        session_id: str,
+        user_request: str,
+        project_id: Optional[str] = None,
+        t_start: Optional[float] = None,
+        t_end: Optional[float] = None,
+        pad_sec: float = 8.0,
+        max_segments: int = 12,
+    ) -> Dict[str, Any]:
         if not self.agent:
             raise RuntimeError("Agent not initialized. Use 'async with' context manager.")
-            
-        response = await self.agent.run(user_request, session_id=session_id, stream=False)
+
+        request_with_ctx = self._inject_memory_context(
+            user_request=user_request,
+            project_id=project_id,
+            t_start=t_start,
+            t_end=t_end,
+            pad_sec=pad_sec,
+            max_segments=max_segments,
+        )
+        response = await self.agent.run(request_with_ctx, session_id=session_id, stream=False)
         
         return {
             "content": response.content,
             # "response": response # Return full response if needed for debugging
         }
     
-    async def execute_task_stream(self, session_id: str, user_request: str):
+    async def execute_task_stream(
+        self,
+        session_id: str,
+        user_request: str,
+        project_id: Optional[str] = None,
+        t_start: Optional[float] = None,
+        t_end: Optional[float] = None,
+        pad_sec: float = 8.0,
+        max_segments: int = 12,
+    ):
         if not self.agent:
             raise RuntimeError("Agent not initialized. Use 'async with' context manager.")
             
@@ -160,8 +222,16 @@ class ReActSystem:
             logger.info(f"[Stream] Starting task stream for session {session_id}")
             yield {'type': 'content', 'content': 'Using ReAct Agent to process request...\n'}
             
+            request_with_ctx = self._inject_memory_context(
+                user_request=user_request,
+                project_id=project_id,
+                t_start=t_start,
+                t_end=t_end,
+                pad_sec=pad_sec,
+                max_segments=max_segments,
+            )
             # Streaming response from Agno
-            stream_gen = await self.agent.run(user_request, session_id=session_id, stream=True)
+            stream_gen = await self.agent.run(request_with_ctx, session_id=session_id, stream=True)
             
             async for chunk in stream_gen:
                 content = ""
@@ -233,6 +303,13 @@ async def main():
     
     try:
         print("ReAct System is ready. You can start inputting tasks (type 'exit' or 'quit' to stop).")
+        print("Commands: /help, /session <id>, /new, /project <id>, /window <t_start> <t_end>, /clearwindow, /pad <sec>, /maxseg <n>")
+        session_id = f"session_{uuid.uuid4().hex[:8]}"
+        project_id = None
+        t_start = None
+        t_end = None
+        pad_sec = 8.0
+        max_segments = 12
         while True:
             try:
                 input_prompt = input("\nUser (please input propmt): ")
@@ -241,14 +318,77 @@ async def main():
                 
                 if not input_prompt.strip():
                     continue
+                if input_prompt.startswith("/"):
+                    parts = input_prompt.strip().split()
+                    cmd = parts[0].lower()
+                    if cmd == "/help":
+                        print("Commands:")
+                        print("  /session <id>        set session id")
+                        print("  /new                 create a new session id")
+                        print("  /project <id>        set project id for memory context")
+                        print("  /window <t0> <t1>    set focus window seconds")
+                        print("  /clearwindow         clear focus window")
+                        print("  /pad <sec>           set context pad seconds (default 8.0)")
+                        print("  /maxseg <n>          set max segments when no window (default 12)")
+                        continue
+                    if cmd == "/session" and len(parts) >= 2:
+                        session_id = parts[1]
+                        print(f"session_id set to {session_id}")
+                        continue
+                    if cmd == "/new":
+                        session_id = f"session_{uuid.uuid4().hex[:8]}"
+                        print(f"session_id set to {session_id}")
+                        continue
+                    if cmd == "/project" and len(parts) >= 2:
+                        project_id = parts[1]
+                        print(f"project_id set to {project_id}")
+                        continue
+                    if cmd == "/window" and len(parts) >= 3:
+                        try:
+                            t_start = float(parts[1])
+                            t_end = float(parts[2])
+                            print(f"window set to t_start={t_start} t_end={t_end}")
+                        except ValueError:
+                            print("invalid /window args, expected floats")
+                        continue
+                    if cmd == "/clearwindow":
+                        t_start = None
+                        t_end = None
+                        print("window cleared")
+                        continue
+                    if cmd == "/pad" and len(parts) >= 2:
+                        try:
+                            pad_sec = float(parts[1])
+                            print(f"pad_sec set to {pad_sec}")
+                        except ValueError:
+                            print("invalid /pad arg, expected float")
+                        continue
+                    if cmd == "/maxseg" and len(parts) >= 2:
+                        try:
+                            max_segments = int(parts[1])
+                            print(f"max_segments set to {max_segments}")
+                        except ValueError:
+                            print("invalid /maxseg arg, expected int")
+                        continue
+                    print("unknown command, use /help")
+                    continue
 
-                session_id = f"session_{uuid.uuid4().hex[:8]}"
-                print(f"processing: {input_prompt} ... (session_id: {session_id})")
+                print(
+                    f"processing: {input_prompt} ... (session_id: {session_id}, project_id: {project_id}, window: {t_start},{t_end})"
+                )
                 
                 # Use stream for CLI feedback
                 print("\n" + "="*60)
                 print("Output:")
-                async for event in system.execute_task_stream(session_id, input_prompt):
+                async for event in system.execute_task_stream(
+                    session_id,
+                    input_prompt,
+                    project_id=project_id,
+                    t_start=t_start,
+                    t_end=t_end,
+                    pad_sec=pad_sec,
+                    max_segments=max_segments,
+                ):
                     if event['type'] == 'content':
                         print(event['content'], end="", flush=True)
                     elif event['type'] == 'error':

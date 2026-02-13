@@ -99,6 +99,11 @@ class ChatRequest(BaseModel):
     prompt: str
     session_id: Optional[str] = None
     model: Optional[str] = None
+    project_id: Optional[str] = None
+    t_start: Optional[float] = None
+    t_end: Optional[float] = None
+    pad_sec: Optional[float] = None
+    max_segments: Optional[int] = None
 
 
 class HealthResponse(BaseModel):
@@ -106,7 +111,16 @@ class HealthResponse(BaseModel):
     timestamp: str
 
 
-async def stream_chat_response(user_id: str, session_id: str, user_prompt: str):
+async def stream_chat_response(
+    user_id: str,
+    session_id: str,
+    user_prompt: str,
+    project_id: Optional[str] = None,
+    t_start: Optional[float] = None,
+    t_end: Optional[float] = None,
+    pad_sec: Optional[float] = None,
+    max_segments: Optional[int] = None,
+):
     """
     Stream chat response as SSE
     
@@ -128,7 +142,15 @@ async def stream_chat_response(user_id: str, session_id: str, user_prompt: str):
         logger.info(f"Streaming task execution for user {user_id}, session {session_id}")
         
         # calling agent's streaming execution method
-        async for event in system.execute_task_stream(session_id, user_prompt):
+        async for event in system.execute_task_stream(
+            session_id,
+            user_prompt,
+            project_id=project_id,
+            t_start=t_start,
+            t_end=t_end,
+            pad_sec=pad_sec if pad_sec is not None else 8.0,
+            max_segments=max_segments if max_segments is not None else 12,
+        ):
             if event.get('type') == 'finish':
                 event['session_id'] = session_id
             
@@ -183,7 +205,16 @@ async def chat(request: ChatRequest, req: Request):
         logger.info(f"POST /chat/stream - user: {user_id}, session: {session_id}, prompt: {request.prompt[:50]}...")
         
         return StreamingResponse(
-            stream_chat_response(user_id, session_id, request.prompt),
+            stream_chat_response(
+                user_id,
+                session_id,
+                request.prompt,
+                project_id=request.project_id,
+                t_start=request.t_start,
+                t_end=request.t_end,
+                pad_sec=request.pad_sec,
+                max_segments=request.max_segments,
+            ),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -204,6 +235,11 @@ async def chat_get(
     prompt: str,
     session_id: Optional[str] = None,
     accessCode: Optional[str] = None,
+    project_id: Optional[str] = None,
+    t_start: Optional[float] = None,
+    t_end: Optional[float] = None,
+    pad_sec: Optional[float] = None,
+    max_segments: Optional[int] = None,
     request: Request = None
 ):
     """
@@ -240,7 +276,16 @@ async def chat_get(
         sid = session_id or str(uuid.uuid4())
         
         return StreamingResponse(
-            stream_chat_response(user_id, sid, prompt),
+            stream_chat_response(
+                user_id,
+                sid,
+                prompt,
+                project_id=project_id,
+                t_start=t_start,
+                t_end=t_end,
+                pad_sec=pad_sec,
+                max_segments=max_segments,
+            ),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
