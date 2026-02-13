@@ -1,16 +1,9 @@
 import os
 import yaml
-import json
-import torch
-import decord
-from datetime import datetime
-from ultralytics import SAM
-from PIL import Image
 from mcp.server.fastmcp import FastMCP
 
 from mcp_tools.base import ToolResponse, setup_logger
-from utils.video_process import split_video_by_fps, encode_clips_to_base64
-from utils.query_llm import prepare_multimodal_messages_openai_format, query_openrouter, multimodal_query
+from utils.query_llm import multimodal_query
 
 
 
@@ -52,16 +45,16 @@ def vision2text_gen(prompt: str, multimodal_path: str, type: str) -> dict:
               - 'error' (str, optional): An error message if the operation failed.
     """
     try:
-        with torch.no_grad():
-            if type == "video":
-                content = multimodal_query(prompt, video_path=multimodal_path)
-            elif type == "image":
-                content = multimodal_query(prompt, image_path=multimodal_path)
-            else:
-                return ToolResponse(
-                    success=False,
-                    message="The type of the multimodal input should be either 'video' or 'image'."
-                )
+        # This tool routes to an LLM-based multimodal endpoint; it does not require torch.
+        if type == "video":
+            content = multimodal_query(prompt, video_path=multimodal_path)
+        elif type == "image":
+            content = multimodal_query(prompt, image_path=multimodal_path)
+        else:
+            return ToolResponse(
+                success=False,
+                message="The type of the multimodal input should be either 'video' or 'image'."
+            )
 
         return ToolResponse(
             success=True,
