@@ -1,29 +1,11 @@
 {
   "mcpServers": {
-    "video_editing": {
-      "command": "python",
-      "args": ["-m", "mcp_tools.video_editing"],
-      "env": {
-        "PYTHONPATH": "/home/zhengyangliang/univa/univa/univa",
-        "CWD": "/home/zhengyangliang/univa/univa/univa"
-      },
-      "auto_confirm": []
-    },
-    "video_tracking": {
-      "command": "python",
-      "args": ["-m", "mcp_tools.video_tracking"],
-      "env": {
-        "PYTHONPATH": "/home/zhengyangliang/univa/univa/univa",
-        "CWD": "/home/zhengyangliang/univa/univa/univa"
-      },
-      "auto_confirm": []
-    },
     "video_understanding": {
       "command": "python",
       "args": ["-m", "mcp_tools.video_understanding"],
       "env": {
-        "PYTHONPATH": "/home/zhengyangliang/univa/univa/univa",
-        "CWD": "/home/zhengyangliang/univa/univa/univa"
+        "PYTHONPATH": "/home/zhengyangliang/videochameleon/univa",
+        "CWD": "/home/zhengyangliang/videochameleon/univa"
       },
       "auto_confirm": []
     },
@@ -31,8 +13,8 @@
       "command": "python",
       "args": ["-m", "mcp_tools.image_gen"],
       "env": {
-        "PYTHONPATH": "/home/zhengyangliang/univa/univa/univa",
-        "CWD": "/home/zhengyangliang/univa/univa/univa"
+        "PYTHONPATH": "/home/zhengyangliang/videochameleon/univa",
+        "CWD": "/home/zhengyangliang/videochameleon/univa"
       },
       "auto_confirm": []
     },
@@ -40,17 +22,8 @@
       "command": "python",
       "args": ["-m", "mcp_tools.video_gen"],
       "env": {
-        "PYTHONPATH": "/home/zhengyangliang/univa/univa/univa",
-        "CWD": "/home/zhengyangliang/univa/univa/univa"
-      },
-      "auto_confirm": []
-    },
-    "audio_gen": {
-      "command": "python",
-      "args": ["-m", "mcp_tools.audio_gen"],
-      "env": {
-        "PYTHONPATH": "/home/zhengyangliang/univa/univa/univa",
-        "CWD": "/home/zhengyangliang/univa/univa/univa"
+        "PYTHONPATH": "/home/zhengyangliang/videochameleon/univa",
+        "CWD": "/home/zhengyangliang/videochameleon/univa"
       },
       "auto_confirm": []
     }

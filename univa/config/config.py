@@ -79,11 +79,8 @@ def load_mcp_config(project_root, env_vars):
     set_config("llm", "openai_api_key", env_vars.get("LLM_OPENAI_API_KEY"))
 
     # 2. Local Model Paths
-    set_config("video_editing", "model_path", env_vars.get("VIDEO_EDIT_MODEL_PATH"))
     set_config("video_understanding", "model_path", env_vars.get("VIDEO_UNDERSTAND_MODEL_PATH"))
     set_config("video_understanding", "retriever_model_path", env_vars.get("VIDEO_RETRIEVER_MODEL_PATH"))
-    set_config("video_tracking", "sa2va_model_path", env_vars.get("VIDEO_TRACK_SA2VA_PATH"))
-    set_config("video_tracking", "sam_model_path", env_vars.get("VIDEO_TRACK_SAM_PATH"))
 
     return mcp_config
 
@@ -91,10 +88,7 @@ def load_config():
     """Load configuration from TOML file or create with defaults if it doesn't exist"""
     app_name = "univa"
     # toml config file - use Preferences dir on macOS
-    if sys.platform == "darwin":
-        CONFIG_FILE = os.path.expanduser(f"~/Library/Preferences/{app_name}/config.toml")
-    else:
-        CONFIG_FILE = os.path.expanduser(f"~/.config/{app_name}/config.toml")
+    CONFIG_FILE = os.path.expanduser(f"univa/config/mcp_tools_config/config.yaml")
     # ensure the directory exists
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
 

@@ -10,7 +10,6 @@ from mcp.server.fastmcp import FastMCP
 
 from mcp_tools.base import ToolResponse, setup_logger
 from utils.video_process import split_video_by_fps, encode_clips_to_base64
-from mcp_tools.video_tracking import video_referring_segmentation
 from utils.query_llm import prepare_multimodal_messages_openai_format, query_openrouter, multimodal_query
 
 

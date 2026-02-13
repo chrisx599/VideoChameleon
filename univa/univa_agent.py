@@ -83,10 +83,11 @@ class ReActAgent:
             ),
             tools=[mcp_tools],
             instructions=formatted_instructions,
-            storage=SqliteDb(db_file=db_file),
-            add_history_to_messages=True,
+            # agno>=? uses `db=` (not `storage=`) for persistence.
+            db=SqliteDb(db_file=db_file),
+            # Include recent chat history in the context sent to the model.
+            add_history_to_context=True,
             num_history_messages=10,
-            show_tool_calls=True,
             markdown=True,
             # enable_react=True # Assuming Agno defaults to ReAct/FunctionCalling with tools
         )
