@@ -3,6 +3,7 @@ import json
 import os
 import traceback
 import uuid
+import contextvars
 from pathlib import Path
 from dotenv import load_dotenv
 import inspect
@@ -35,6 +36,7 @@ from univa.mcp_tools.image_gen import (
     sequential_image_gen,
 )
 from univa.mcp_tools.video_understanding import vision2text_gen
+from univa.memory.tools import get_memory_tools
 
 def _init_env():
     base = Path(__file__).resolve().parents[1]
@@ -50,6 +52,9 @@ from univa.config.config import config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+PROJECT_ID_CTX: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("project_id", default=None)
+CURRENT_PROJECT_ID: Optional[str] = None
 
 def load_prompt(prompt_name: str) -> str:
     prompt_dir = config.get('prompt_dir')
@@ -67,7 +72,7 @@ def load_prompt(prompt_name: str) -> str:
 
 
 def _builtin_tool_callables() -> List[Callable[..., Any]]:
-    return [
+    tools = [
         text2video_gen,
         image2video_gen,
         frame2frame_video_gen,
@@ -77,6 +82,8 @@ def _builtin_tool_callables() -> List[Callable[..., Any]]:
         sequential_image_gen,
         vision2text_gen,
     ]
+    tools.extend(get_memory_tools())
+    return tools
 
 
 def _parse_extra(extra: Optional[str | Dict[str, Any]]) -> Dict[str, Any]:
@@ -257,15 +264,60 @@ class ReActAgent:
     def _wrap_callable(self, func: Callable[..., Any]) -> BaseTool:
         desc = (getattr(func, "__doc__", "") or "").strip().splitlines()
         description = desc[0].strip() if desc else func.__name__
-        if inspect.iscoroutinefunction(func):
+        sig = None
+        try:
+            sig = inspect.signature(func)
+        except Exception:
+            sig = None
+        needs_inject = bool(sig and "project_id" in sig.parameters)
+
+        def _inject_project_id(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+            if not (sig and "project_id" in sig.parameters):
+                return kwargs
+            pid = PROJECT_ID_CTX.get() or CURRENT_PROJECT_ID
+            if pid:
+                if kwargs.get("project_id") != pid:
+                    kwargs = dict(kwargs)
+                    kwargs["project_id"] = pid
+            return kwargs
+
+        if not needs_inject:
+            if inspect.iscoroutinefunction(func):
+                return StructuredTool.from_function(
+                    coroutine=func,
+                    name=func.__name__,
+                    description=description or func.__name__,
+                    parse_docstring=False,
+                )
             return StructuredTool.from_function(
-                coroutine=func,
+                func=func,
                 name=func.__name__,
                 description=description or func.__name__,
                 parse_docstring=False,
             )
+
+        if inspect.iscoroutinefunction(func):
+            async def _wrapped_async(**kwargs: Any):
+                return await func(**_inject_project_id(kwargs))
+            if sig is not None:
+                _wrapped_async.__signature__ = sig  # type: ignore[attr-defined]
+            _wrapped_async.__annotations__ = getattr(func, "__annotations__", {})
+
+            return StructuredTool.from_function(
+                coroutine=_wrapped_async,
+                name=func.__name__,
+                description=description or func.__name__,
+                parse_docstring=False,
+            )
+
+        def _wrapped_sync(**kwargs: Any):
+            return func(**_inject_project_id(kwargs))
+        if sig is not None:
+            _wrapped_sync.__signature__ = sig  # type: ignore[attr-defined]
+        _wrapped_sync.__annotations__ = getattr(func, "__annotations__", {})
+
         return StructuredTool.from_function(
-            func=func,
+            func=_wrapped_sync,
             name=func.__name__,
             description=description or func.__name__,
             parse_docstring=False,
@@ -443,7 +495,15 @@ class ReActSystem:
             pad_sec=pad_sec,
             max_segments=max_segments,
         )
-        response = await self.agent.run(request_with_ctx, session_id=session_id, stream=False)
+        global CURRENT_PROJECT_ID
+        prev_pid = CURRENT_PROJECT_ID
+        CURRENT_PROJECT_ID = project_id
+        token = PROJECT_ID_CTX.set(project_id)
+        try:
+            response = await self.agent.run(request_with_ctx, session_id=session_id, stream=False)
+        finally:
+            PROJECT_ID_CTX.reset(token)
+            CURRENT_PROJECT_ID = prev_pid
         
         return {
             "content": response.content,
@@ -462,7 +522,10 @@ class ReActSystem:
     ):
         if not self.agent:
             raise RuntimeError("Agent not initialized. Use 'async with' context manager.")
-            
+        global CURRENT_PROJECT_ID
+        prev_pid = CURRENT_PROJECT_ID
+        CURRENT_PROJECT_ID = project_id
+        token = PROJECT_ID_CTX.set(project_id)
         try:
             logger.info(f"[Stream] Starting task stream for session {session_id}")
             yield {'type': 'content', 'content': 'Using ReAct Agent to process request...\n'}
@@ -487,6 +550,7 @@ class ReActSystem:
                 stream_gen = await stream_gen
 
             got_model_content = False
+            saw_stream_chunks = False
             last_tool_summary: Optional[Dict[str, Any]] = None
             reported_tool_summary = False
 
@@ -501,10 +565,12 @@ class ReActSystem:
                     if chunk_content:
                         content = chunk_content
                         got_model_content = True
+                        saw_stream_chunks = True
                 elif event_type == "on_chat_model_end":
                     output = data.get("output")
                     output_content = getattr(output, "content", None) if output is not None else None
-                    if output_content:
+                    # Avoid duplicating streamed content when the end event contains the full message.
+                    if output_content and not saw_stream_chunks:
                         content = output_content
                         got_model_content = True
                 elif event_type == "on_tool_start":
@@ -539,7 +605,8 @@ class ReActSystem:
                             'content': f"\n[tool_result] {_safe_json(last_tool_summary)}\n",
                         }
 
-            if not got_model_content and last_tool_summary:
+            # Only emit a textual fallback if we never reported any tool summary.
+            if not got_model_content and last_tool_summary and not reported_tool_summary:
                 yield {
                     'type': 'content',
                     'content': f"\nResult: {_safe_json(last_tool_summary)}\n",
@@ -553,6 +620,9 @@ class ReActSystem:
                 'type': 'error',
                 'content': str(e)
             }
+        finally:
+            PROJECT_ID_CTX.reset(token)
+            CURRENT_PROJECT_ID = prev_pid
 
     async def _extract_last_tool_summary_from_state(self, session_id: str) -> Optional[Dict[str, Any]]:
         if not self.agent:
@@ -627,9 +697,62 @@ async def main():
             info = f"[dim]Session: [bold]{session_id}[/] | Project: [bold]{pid}[/] | Window: [bold]{win}[/] | Pad: {pad_sec}s | MaxSeg: {max_segments}[/]"
             console.print(info)
 
+        def _list_projects() -> List[str]:
+            projects_dir = Path(__file__).resolve().parents[1] / "projects"
+            if not projects_dir.exists():
+                return []
+            out: List[str] = []
+            for p in sorted(projects_dir.iterdir()):
+                if not p.is_dir():
+                    continue
+                if p.name.startswith("."):
+                    continue
+                if p.name == "README.md":
+                    continue
+                out.append(p.name)
+            return out
+
+        def _generate_project_id() -> str:
+            return f"project_{uuid.uuid4().hex[:8]}"
+
+        def _choose_project_id_on_start() -> str:
+            names = _list_projects()
+            if not names:
+                pid = _generate_project_id()
+                console.print(f"[green]No existing projects. Using new project_id: {pid}[/]")
+                return pid
+
+            console.print(Panel(
+                "Select a project:\n"
+                + "\n".join([f"  {i+1}. {name}" for i, name in enumerate(names)])
+                + "\n\nType a number to select, or type 'new' to create one.",
+                title="Projects",
+                border_style="cyan",
+            ))
+            while True:
+                choice = console.input("[bold cyan]Project> [/]").strip()
+                if not choice:
+                    continue
+                if choice.lower() in {"new", "n"}:
+                    pid = _generate_project_id()
+                    console.print(f"[green]project_id set to {pid}[/]")
+                    return pid
+                if choice.isdigit():
+                    idx = int(choice)
+                    if 1 <= idx <= len(names):
+                        pid = names[idx - 1]
+                        console.print(f"[green]project_id set to {pid}[/]")
+                        return pid
+                    console.print("[red]invalid selection[/]")
+                    continue
+                # Treat any other input as an explicit project id
+                pid = choice
+                console.print(f"[green]project_id set to {pid}[/]")
+                return pid
+
         _banner()
         session_id = f"session_{uuid.uuid4().hex[:8]}"
-        project_id = None
+        project_id = _choose_project_id_on_start()
         t_start = None
         t_end = None
         pad_sec = 8.0
@@ -654,6 +777,8 @@ async def main():
                             "  /session <id>        set session id\n"
                             "  /new                 create a new session id\n"
                             "  /project <id>        set project id for memory context\n"
+                            "  /project list        list existing projects\n"
+                            "  /project new <id>    create/select a new project id\n"
                             "  /window <t0> <t1>    set focus window seconds\n"
                             "  /clearwindow         clear focus window\n"
                             "  /pad <sec>           set context pad seconds (default 8.0)\n"
@@ -673,9 +798,25 @@ async def main():
                         session_id = f"session_{uuid.uuid4().hex[:8]}"
                         console.print(f"[green]session_id set to {session_id}[/]")
                         continue
-                    if cmd == "/project" and len(parts) >= 2:
-                        project_id = parts[1]
-                        console.print(f"[green]project_id set to {project_id}[/]")
+                    if cmd == "/project":
+                        if len(parts) >= 2 and parts[1].lower() == "list":
+                            names = _list_projects()
+                            if names:
+                                console.print("[dim]Existing projects:[/]")
+                                for name in names:
+                                    console.print(f"  - {name}")
+                            else:
+                                console.print("[dim]No existing projects found.[/]")
+                            continue
+                        if len(parts) >= 2 and parts[1].lower() == "new":
+                            project_id = parts[2] if len(parts) >= 3 else _generate_project_id()
+                            console.print(f"[green]project_id set to {project_id}[/]")
+                            continue
+                        if len(parts) >= 2:
+                            project_id = parts[1]
+                            console.print(f"[green]project_id set to {project_id}[/]")
+                            continue
+                        console.print("[red]usage: /project <id> | /project list | /project new <id>[/]")
                         continue
                     if cmd == "/window" and len(parts) >= 3:
                         try:
@@ -705,6 +846,10 @@ async def main():
                             console.print("[red]invalid /maxseg arg, expected int[/]")
                         continue
                     console.print("[red]unknown command, use /help[/]")
+                    continue
+
+                if not project_id:
+                    console.print("[yellow]Please set a project id first (required). Use /project list or /project new <id>.[/]")
                     continue
 
                 console.print(f"[dim]Processing...[/]")

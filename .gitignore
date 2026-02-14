@@ -57,3 +57,4 @@ config.yaml
 # Per-project memory databases / artifacts (generated locally)
 projects/**
 !projects/README.md
+.worktrees/
