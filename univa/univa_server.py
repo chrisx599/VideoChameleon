@@ -23,10 +23,12 @@ def _init_env():
 
 _init_env()
 
+from univa.utils.logging_setup import configure_logging, log_context
+
 from univa.univa_agent import ReActSystem
 
 
-logging.basicConfig(level=logging.INFO)
+configure_logging(log_file="logs/app.log", level=logging.INFO, enable_console=False, force=True)
 logger = logging.getLogger(__name__)
 
 os.environ['UniVA_HTTP_SERVER_MODE'] = 'true'
@@ -91,50 +93,51 @@ async def stream_chat_response(
     
     return SSE stream compatible with useCompletion
     """
-    try:
-        init_message = {
-            'type': 'content',
-            'content': 'Initializing system, please wait...'
-        }
-        init_json = json.dumps(init_message, ensure_ascii=False)
-        logger.info("Sending system initialization message")
-        sse_init = f"data: {init_json}\n\n"
-        yield sse_init.encode('utf-8') if isinstance(sse_init, str) else sse_init
-        await asyncio.sleep(0.01)
-        
-        system = await initialize_global_agents()
-        
-        logger.info(f"Streaming task execution for user {user_id}, session {session_id}")
-        
-        # calling agent's streaming execution method
-        async for event in system.execute_task_stream(
-            session_id,
-            user_prompt,
-            project_id=project_id,
-            t_start=t_start,
-            t_end=t_end,
-            pad_sec=pad_sec if pad_sec is not None else 8.0,
-            max_segments=max_segments if max_segments is not None else 12,
-        ):
-            if event.get('type') == 'finish':
-                event['session_id'] = session_id
-            
-            json_str = json.dumps(event, ensure_ascii=False)
-            logger.info(f"Sending SSE event: {event.get('type', 'unknown')}")
-            logger.debug(f"Event details:\n{json_str}")
-            
-            sse_message = f"data: {json_str}\n\n"
-            yield sse_message.encode('utf-8') if isinstance(sse_message, str) else sse_message
-            
+    with log_context(session_id=session_id or "-", project_id=project_id or "-"):
+        try:
+            init_message = {
+                'type': 'content',
+                'content': 'Initializing system, please wait...'
+            }
+            init_json = json.dumps(init_message, ensure_ascii=False)
+            logger.info("Sending system initialization message")
+            sse_init = f"data: {init_json}\n\n"
+            yield sse_init.encode('utf-8') if isinstance(sse_init, str) else sse_init
             await asyncio.sleep(0.01)
-        
-        logger.info("Stream completed successfully")
-        
-    except Exception as e:
-        logger.error(f"Error in stream_chat_response: {e}")
-        logger.error(traceback.format_exc())
-        error_message = f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
-        yield error_message.encode('utf-8') if isinstance(error_message, str) else error_message
+
+            system = await initialize_global_agents()
+
+            logger.info(f"Streaming task execution for user {user_id}, session {session_id}")
+
+            # calling agent's streaming execution method
+            async for event in system.execute_task_stream(
+                session_id,
+                user_prompt,
+                project_id=project_id,
+                t_start=t_start,
+                t_end=t_end,
+                pad_sec=pad_sec if pad_sec is not None else 8.0,
+                max_segments=max_segments if max_segments is not None else 12,
+            ):
+                if event.get('type') == 'finish':
+                    event['session_id'] = session_id
+
+                json_str = json.dumps(event, ensure_ascii=False)
+                logger.info(f"Sending SSE event: {event.get('type', 'unknown')}")
+                logger.debug(f"Event details:\n{json_str}")
+
+                sse_message = f"data: {json_str}\n\n"
+                yield sse_message.encode('utf-8') if isinstance(sse_message, str) else sse_message
+
+                await asyncio.sleep(0.01)
+
+            logger.info("Stream completed successfully")
+
+        except Exception as e:
+            logger.error(f"Error in stream_chat_response: {e}")
+            logger.error(traceback.format_exc())
+            error_message = f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            yield error_message.encode('utf-8') if isinstance(error_message, str) else error_message
 
 @app.post("/chat/stream")
 async def chat(request: ChatRequest, req: Request):

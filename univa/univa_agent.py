@@ -37,6 +37,7 @@ from univa.mcp_tools.image_gen import (
 )
 from univa.mcp_tools.video_understanding import vision2text_gen
 from univa.memory.tools import get_memory_tools
+from univa.utils.logging_setup import configure_logging, log_context
 
 def _init_env():
     base = Path(__file__).resolve().parents[1]
@@ -50,7 +51,6 @@ _init_env()
 
 from univa.config.config import config
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 PROJECT_ID_CTX: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("project_id", default=None)
@@ -500,7 +500,8 @@ class ReActSystem:
         CURRENT_PROJECT_ID = project_id
         token = PROJECT_ID_CTX.set(project_id)
         try:
-            response = await self.agent.run(request_with_ctx, session_id=session_id, stream=False)
+            with log_context(session_id=session_id, project_id=project_id):
+                response = await self.agent.run(request_with_ctx, session_id=session_id, stream=False)
         finally:
             PROJECT_ID_CTX.reset(token)
             CURRENT_PROJECT_ID = prev_pid
@@ -527,99 +528,101 @@ class ReActSystem:
         CURRENT_PROJECT_ID = project_id
         token = PROJECT_ID_CTX.set(project_id)
         try:
-            logger.info(f"[Stream] Starting task stream for session {session_id}")
-            yield {'type': 'content', 'content': 'Using ReAct Agent to process request...\n'}
-            
-            request_with_ctx = await self._build_request_with_context(
-                session_id=session_id,
-                user_request=user_request,
-                project_id=project_id,
-                t_start=t_start,
-                t_end=t_end,
-                pad_sec=pad_sec,
-                max_segments=max_segments,
-            )
-            # Streaming response from LangGraph (with events so we can surface tool calls/results)
-            stream_gen = self.agent.run(
-                request_with_ctx,
-                session_id=session_id,
-                stream=True,
-                stream_events=True,
-            )
-            if inspect.isawaitable(stream_gen):
-                stream_gen = await stream_gen
+            with log_context(session_id=session_id, project_id=project_id):
+                try:
+                    logger.info(f"[Stream] Starting task stream for session {session_id}")
+                    yield {'type': 'content', 'content': 'Using ReAct Agent to process request...\n'}
 
-            got_model_content = False
-            saw_stream_chunks = False
-            last_tool_summary: Optional[Dict[str, Any]] = None
-            reported_tool_summary = False
+                    request_with_ctx = await self._build_request_with_context(
+                        session_id=session_id,
+                        user_request=user_request,
+                        project_id=project_id,
+                        t_start=t_start,
+                        t_end=t_end,
+                        pad_sec=pad_sec,
+                        max_segments=max_segments,
+                    )
+                    # Streaming response from LangGraph (with events so we can surface tool calls/results)
+                    stream_gen = self.agent.run(
+                        request_with_ctx,
+                        session_id=session_id,
+                        stream=True,
+                        stream_events=True,
+                    )
+                    if inspect.isawaitable(stream_gen):
+                        stream_gen = await stream_gen
 
-            async for event in stream_gen:
-                content = ""
-                event_type = event.get("event") if isinstance(event, dict) else None
-                data = event.get("data", {}) if isinstance(event, dict) else {}
+                    got_model_content = False
+                    saw_stream_chunks = False
+                    last_tool_summary: Optional[Dict[str, Any]] = None
+                    reported_tool_summary = False
 
-                if event_type == "on_chat_model_stream":
-                    chunk = data.get("chunk")
-                    chunk_content = getattr(chunk, "content", None) if chunk is not None else None
-                    if chunk_content:
-                        content = chunk_content
-                        got_model_content = True
-                        saw_stream_chunks = True
-                elif event_type == "on_chat_model_end":
-                    output = data.get("output")
-                    output_content = getattr(output, "content", None) if output is not None else None
-                    # Avoid duplicating streamed content when the end event contains the full message.
-                    if output_content and not saw_stream_chunks:
-                        content = output_content
-                        got_model_content = True
-                elif event_type == "on_tool_start":
-                    tool_name = event.get("name") or data.get("name")
-                    tool_args = data.get("input") or {}
-                    if tool_name:
-                        yield {'type': 'tool_start', 'name': tool_name, 'args': tool_args}
+                    async for event in stream_gen:
+                        content = ""
+                        event_type = event.get("event") if isinstance(event, dict) else None
+                        data = event.get("data", {}) if isinstance(event, dict) else {}
 
-                elif event_type == "on_tool_end":
-                    tool_name = event.get("name") or data.get("name")
-                    payload = _normalize_tool_content(data.get("output"))
-                    if payload is not None:
-                        summary = _summarize_tool_result(payload)
-                        last_tool_summary = summary
-                        if tool_name:
-                            # summary = {"tool": tool_name, **summary} # Optional: include name in summary if needed
-                            yield {'type': 'tool_end', 'name': tool_name, 'output': summary}
-                        reported_tool_summary = True
+                        if event_type == "on_chat_model_stream":
+                            chunk = data.get("chunk")
+                            chunk_content = getattr(chunk, "content", None) if chunk is not None else None
+                            if chunk_content:
+                                content = chunk_content
+                                got_model_content = True
+                                saw_stream_chunks = True
+                        elif event_type == "on_chat_model_end":
+                            output = data.get("output")
+                            output_content = getattr(output, "content", None) if output is not None else None
+                            # Avoid duplicating streamed content when the end event contains the full message.
+                            if output_content and not saw_stream_chunks:
+                                content = output_content
+                                got_model_content = True
+                        elif event_type == "on_tool_start":
+                            tool_name = event.get("name") or data.get("name")
+                            tool_args = data.get("input") or {}
+                            if tool_name:
+                                yield {'type': 'tool_start', 'name': tool_name, 'args': tool_args}
 
-                if content:
-                    yield {'type': 'content', 'content': content}
+                        elif event_type == "on_tool_end":
+                            tool_name = event.get("name") or data.get("name")
+                            payload = _normalize_tool_content(data.get("output"))
+                            if payload is not None:
+                                summary = _summarize_tool_result(payload)
+                                last_tool_summary = summary
+                                if tool_name:
+                                    # summary = {"tool": tool_name, **summary} # Optional: include name in summary if needed
+                                    yield {'type': 'tool_end', 'name': tool_name, 'output': summary}
+                                reported_tool_summary = True
 
-            if not last_tool_summary or not (
-                last_tool_summary.get("output_path") or last_tool_summary.get("output_url")
-            ):
-                session_summary = await self._extract_last_tool_summary_from_state(session_id)
-                if session_summary:
-                    last_tool_summary = session_summary
-                    if not reported_tool_summary:
+                        if content:
+                            yield {'type': 'content', 'content': content}
+
+                    if not last_tool_summary or not (
+                        last_tool_summary.get("output_path") or last_tool_summary.get("output_url")
+                    ):
+                        session_summary = await self._extract_last_tool_summary_from_state(session_id)
+                        if session_summary:
+                            last_tool_summary = session_summary
+                            if not reported_tool_summary:
+                                yield {
+                                    'type': 'content',
+                                    'content': f\"\\n[tool_result] {_safe_json(last_tool_summary)}\\n\",
+                                }
+
+                    # Only emit a textual fallback if we never reported any tool summary.
+                    if not got_model_content and last_tool_summary and not reported_tool_summary:
                         yield {
                             'type': 'content',
-                            'content': f"\n[tool_result] {_safe_json(last_tool_summary)}\n",
+                            'content': f\"\\nResult: {_safe_json(last_tool_summary)}\\n\",
                         }
+                    yield {'type': 'finish', 'session_id': session_id}
 
-            # Only emit a textual fallback if we never reported any tool summary.
-            if not got_model_content and last_tool_summary and not reported_tool_summary:
-                yield {
-                    'type': 'content',
-                    'content': f"\nResult: {_safe_json(last_tool_summary)}\n",
-                }
-            yield {'type': 'finish', 'session_id': session_id}
-            
-        except Exception as e:
-            logger.error(f"[Stream] Error in execute_task_stream: {e}")
-            logger.error(traceback.format_exc())
-            yield {
-                'type': 'error',
-                'content': str(e)
-            }
+                except Exception as e:
+                    logger.error(f\"[Stream] Error in execute_task_stream: {e}\")
+                    logger.error(traceback.format_exc())
+                    yield {
+                        'type': 'error',
+                        'content': str(e)
+                    }
         finally:
             PROJECT_ID_CTX.reset(token)
             CURRENT_PROJECT_ID = prev_pid
@@ -654,18 +657,7 @@ async def initialize_global_agents() -> ReActSystem:
 
 
 async def main():
-    # CLI logging: write to file, keep console clean.
-    log_dir = Path(__file__).resolve().parent.parent / "logs" / "cli"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "cli.log"
-    root_logger = logging.getLogger()
-    for h in list(root_logger.handlers):
-        root_logger.removeHandler(h)
-    file_handler = logging.FileHandler(log_file, encoding="utf-8")
-    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
-    root_logger.addHandler(file_handler)
-    root_logger.setLevel(logging.INFO)
-    logging.captureWarnings(True)
+    configure_logging(log_file="logs/app.log", level=logging.INFO, enable_console=False, force=True)
 
     # Import rich here to ensure it's available
     try:
