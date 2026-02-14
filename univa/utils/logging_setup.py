@@ -65,14 +65,15 @@ def configure_logging(
 
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
     file_handler.setFormatter(formatter)
+    file_handler.addFilter(ContextFilter())
 
     root.addHandler(file_handler)
     if enable_console:
         stream_handler = logging.StreamHandler()
         stream_handler.setFormatter(formatter)
+        stream_handler.addFilter(ContextFilter())
         root.addHandler(stream_handler)
 
-    root.addFilter(ContextFilter())
     root.setLevel(level)
     logging.captureWarnings(True)
     root._univa_logging_configured = True
