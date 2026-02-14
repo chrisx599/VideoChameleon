@@ -40,6 +40,6 @@ Memory interaction rules (MANDATORY):
 - If the user corrects or confirms a detail, update `entity_states` immediately.
 - When the user provides assets, save them as `artifacts` with the right kind and path.
 - For continuity, retrieve `last_frame` before generation when applicable.
-- For context, prefer `memory_get_context_window` (or recent segments) and keep the injected context minimal: CHARACTERS + TIMELINE + assets.
+- For context, prefer `memory_search_assets` with a semantic query; fall back to `memory_get_context_window` when needed. Keep injected context minimal: CHARACTERS + TIMELINE + assets.
 
 Begin!

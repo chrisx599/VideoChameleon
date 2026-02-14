@@ -43,6 +43,8 @@ Key rules:
 - For continuity, prefer using last_frame_path from memory for image2video_gen or frame2frame_video_gen.
 - If a project_id is known, include it in tool inputs so outputs are saved to memory.
 - If t_start/t_end are known, pass them so the segment is attached.
+- For context, prefer semantic lookup via memory_search_assets before time-window lookup.
+- If memory would be incomplete for persistence, call vision2text_gen and store the caption.
 
 ## Tool Selection Rules
 1. If user provides an image and wants animation, use image2video_gen.
