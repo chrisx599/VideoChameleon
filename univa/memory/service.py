@@ -64,7 +64,7 @@ class ProjectMemoryService:
         params: Optional[Dict[str, Any]] = None,
         make_active: bool = True,
     ) -> Dict[str, Any]:
-        return self.store.add_clip_take(
+        clip = self.store.add_clip_take(
             segment_id=segment_id,
             output_path=output_path,
             prompt=prompt,
@@ -74,6 +74,15 @@ class ProjectMemoryService:
             params=params,
             make_active=make_active,
         )
+        self.store.upsert_asset_index(
+            kind="video",
+            path=output_path,
+            segment_id=segment_id,
+            clip_id=clip.get("clip_id"),
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+        )
+        return clip
 
     def get_clip(self, clip_id: str) -> Optional[Dict[str, Any]]:
         return self.store.get_clip(clip_id=clip_id)
