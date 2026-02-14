@@ -9,11 +9,6 @@ def get_default_config():
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         
     return {
-        # Auth configuration
-        "auth_config_file": os.path.join(project_root, "univa/config/auth_config.json"),
-        "auth_enabled": True,
-        "admin_access_code": "",  # Will be generated on first init
-        
         # Session configuration
         "session_timeout_minutes": 60,
         "max_sessions_per_user": 10,
@@ -110,11 +105,6 @@ def load_config():
                 if key not in config:
                     config[key] = value
 
-    # Set up data files
-    for file_key in ["auth_config_file"]:
-        config[file_key] = os.path.expanduser(config[file_key])
-        os.makedirs(os.path.dirname(config[file_key]), exist_ok=True)
-
     # Load .env (secrets only). We intentionally do NOT override model choices from .env.
     try:
         univa_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -150,7 +140,3 @@ def load_config():
     return CONFIG_FILE, config
 
 CONFIG_FILE, config = load_config()
-
-# Initialize auth service
-from ..auth.auth_service import AuthService
-auth_service = AuthService(config['auth_config_file'])

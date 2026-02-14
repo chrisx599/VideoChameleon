@@ -1,6 +1,3 @@
-auth_config_file = "/home/zhengyangliang/videochameleon/univa/config/auth_config.json"
-auth_enabled = true
-admin_access_code = ""
 session_timeout_minutes = 60
 max_sessions_per_user = 10
 mcp_servers_config = "/home/zhengyangliang/videochameleon/univa/config/mcp_configs.json"
