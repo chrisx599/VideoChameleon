@@ -1,18 +1,27 @@
 import yaml
 import json
 import os
-from typing import Dict, List, Optional
+import re
+import time
+from typing import Dict, List, Optional, Tuple
 from datetime import datetime
-from mcp.server.fastmcp import FastMCP
+from pathlib import Path
 
-from mcp_tools.base import ToolResponse, setup_logger
-from utils.video_process import merge_videos, storyboard_generate, save_last_frame_decord
-from utils.query_llm import refine_gen_prompt, audio_prompt_gen
-from utils.image_process import download_image
-from utils.wavespeed_api import text_to_video_generate, image_to_video_generate, frame_to_frame_video, text_to_image_generate, image_to_image_generate, audio_gen, hailuo_i2v_pro
+from univa.mcp_tools.base import ToolResponse, setup_logger
+from univa.utils.video_process import merge_videos, storyboard_generate, save_last_frame_decord
+from univa.utils.query_llm import refine_gen_prompt, audio_prompt_gen
+from univa.utils.image_process import download_image
+from univa.utils.wavespeed_api import (
+    text_to_video_generate,
+    image_to_video_generate,
+    frame_to_frame_video,
+    text_to_image_generate,
+    image_to_image_generate,
+    audio_gen,
+    hailuo_i2v_pro,
+)
 
 # Load configuration
-os.chdir(os.path.dirname(os.path.dirname(__file__)))
 config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config/mcp_tools_config")
 config_path = os.path.join(config_dir, "config.yaml")
 if not os.path.exists(config_path):
@@ -35,12 +44,80 @@ def _get_wavespeed_api_key() -> str:
 logger = setup_logger(__name__, "logs/mcp_tools", "video_gen.log")
 logger.info(f"Loaded video_gen_config: {video_gen_config}")
 
-mcp = FastMCP("Video_Generation_Server")
-
 try:
-    from memory.service import ProjectMemoryService
+    from univa.memory.service import ProjectMemoryService
 except Exception:
     ProjectMemoryService = None
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_CACHE_TTL_SEC = 180
+_RECENT_RESULTS: Dict[Tuple, Dict] = {}
+
+
+def _resolve_output_dir(base_output_path: str | None) -> Path:
+    base = Path(base_output_path) if base_output_path else Path("results")
+    if not base.is_absolute():
+        base = _REPO_ROOT / base
+    return base
+
+
+def _slugify(text: str, max_len: int = 30) -> str:
+    s = re.sub(r"[^a-zA-Z0-9_-]+", "_", text.strip())[:max_len]
+    return s.strip("_") or "output"
+
+
+def _make_save_path(prompt: str, ext: str = ".mp4") -> str:
+    base_dir = _resolve_output_dir(video_gen_config.get("base_output_path"))
+    stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    slug = _slugify(prompt)
+    save_dir = base_dir / f"{stamp}_{slug}"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    fname = datetime.now().strftime("%m%d%H%M%S") + ext
+    return str(save_dir / fname)
+
+
+def _cache_key(tool: str, prompt: str, *parts: str) -> Tuple:
+    return (tool, prompt, *parts)
+
+
+def _cache_get(key: Tuple) -> Optional[Dict]:
+    entry = _RECENT_RESULTS.get(key)
+    if not entry:
+        return None
+    if time.time() - entry["ts"] > _CACHE_TTL_SEC:
+        _RECENT_RESULTS.pop(key, None)
+        return None
+    return entry["data"]
+
+
+def _cache_put(key: Tuple, data: Dict) -> None:
+    _RECENT_RESULTS[key] = {"ts": time.time(), "data": data}
+
+
+def _to_tool_response(data: Dict, success: bool, message: str) -> ToolResponse:
+    output_path = data.get("output_path")
+    if output_path:
+        try:
+            output_path = str(Path(output_path).resolve())
+            data["output_path"] = output_path
+        except Exception:
+            pass
+    output_url = data.get("output_url")
+    segment_id = data.get("segment_id")
+    clip_id = data.get("clip_id")
+    last_frame_path = data.get("last_frame_path")
+    cached = data.get("cached")
+    return ToolResponse(
+        success=success,
+        message=message,
+        output_path=output_path,
+        output_url=output_url,
+        segment_id=segment_id,
+        clip_id=clip_id,
+        last_frame_path=last_frame_path,
+        cached=cached,
+        content=data,
+    )
 
 
 def _maybe_open_memory(project_id: Optional[str]):
@@ -97,7 +174,6 @@ def _save_last_frame_artifact(svc, segment_id: str, clip_id: str, video_path: st
         logger.warning(f"Failed to save last frame artifact: {exc}")
     return last_frame_path
 
-@mcp.tool()
 async def text2video_gen(
     prompt: str,
     project_id: str = "",
@@ -132,13 +208,15 @@ async def text2video_gen(
               - 'error' (str, optional): An error message if the generation failed.
     """
     model = video_gen_config.get("text_to_video")
+    cache_key = _cache_key("text2video", prompt)
+    cached = _cache_get(cache_key)
+    if cached and cached.get("success"):
+        cached["cached"] = True
+        return _to_tool_response(cached, True, "Video generated (cached).")
 
     if model == "seedance":
         api_key = _get_wavespeed_api_key()
-        save_dir = f"results/{datetime.now().strftime('%Y%m%d%H%M%S')}_{prompt[:30].replace(' ', '_')}"
-        os.makedirs(save_dir, exist_ok=True)
-        _time = datetime.now().strftime("%m%d%H%M%S")
-        save_path = f"{save_dir}/{_time}.mp4"
+        save_path = _make_save_path(prompt, ext=".mp4")
         return_dict = text_to_video_generate(api_key, prompt, save_path=save_path)
 
         svc = _maybe_open_memory(project_id)
@@ -174,12 +252,18 @@ async def text2video_gen(
             if svc:
                 svc.close()
 
-        return return_dict
+        if return_dict.get("success"):
+            _cache_put(cache_key, return_dict)
+            return _to_tool_response(return_dict, True, "Video generated successfully.")
+        return _to_tool_response(return_dict, False, return_dict.get("error", "Video generation failed."))
 
-    return {"success": False, "error": f"Unsupported text_to_video model: {model}"}
+    return _to_tool_response(
+        {"success": False, "error": f"Unsupported text_to_video model: {model}"},
+        False,
+        f"Unsupported text_to_video model: {model}",
+    )
 
 
-@mcp.tool()
 async def image2video_gen(
     prompt: str,
     image_path: str,
@@ -214,13 +298,15 @@ async def image2video_gen(
               - 'error' (str, optional): An error message if the generation failed.
     """
     model = video_gen_config.get("image_to_video")
+    cache_key = _cache_key("image2video", prompt, image_path)
+    cached = _cache_get(cache_key)
+    if cached and cached.get("success"):
+        cached["cached"] = True
+        return _to_tool_response(cached, True, "Video generated (cached).")
 
     if model == "seedance":
         api_key = _get_wavespeed_api_key()
-        save_dir = f"results/{datetime.now().strftime('%Y%m%d%H%M%S')}_{prompt[:30].replace(' ', '_')}"
-        os.makedirs(save_dir, exist_ok=True)
-        _time = datetime.now().strftime("%m%d%H%M%S")
-        save_path = f"{save_dir}/{_time}.mp4"
+        save_path = _make_save_path(prompt, ext=".mp4")
         return_dict = image_to_video_generate(api_key, prompt, image_path, save_path=save_path)
 
         svc = _maybe_open_memory(project_id)
@@ -256,13 +342,19 @@ async def image2video_gen(
             if svc:
                 svc.close()
 
-        return return_dict
+        if return_dict.get("success"):
+            _cache_put(cache_key, return_dict)
+            return _to_tool_response(return_dict, True, "Video generated successfully.")
+        return _to_tool_response(return_dict, False, return_dict.get("error", "Video generation failed."))
 
-    return {"success": False, "error": f"Unsupported image_to_video model: {model}"}
+    return _to_tool_response(
+        {"success": False, "error": f"Unsupported image_to_video model: {model}"},
+        False,
+        f"Unsupported image_to_video model: {model}",
+    )
 
 
 
-@mcp.tool()
 async def frame2frame_video_gen(
     prompt: str,
     first_frame_path: str,
@@ -299,13 +391,15 @@ async def frame2frame_video_gen(
               - 'error' (str, optional): An error message if the generation failed.
     """
     model = video_gen_config.get("frame_to_frame_video")
+    cache_key = _cache_key("frame2frame", prompt, first_frame_path, last_frame_path)
+    cached = _cache_get(cache_key)
+    if cached and cached.get("success"):
+        cached["cached"] = True
+        return _to_tool_response(cached, True, "Video generated (cached).")
 
     if model == "wan_api":
         api_key = _get_wavespeed_api_key()
-        save_dir = f"results/{datetime.now().strftime('%Y%m%d%H%M%S')}_{prompt[:30].replace(' ', '_')}"
-        os.makedirs(save_dir, exist_ok=True)
-        _time = datetime.now().strftime("%m%d%H%M%S")
-        save_path = f"{save_dir}/{_time}.mp4"
+        save_path = _make_save_path(prompt, ext=".mp4")
         return_dict = hailuo_i2v_pro(api_key, prompt, first_frame_path, last_frame_path, save_path=save_path)
 
         svc = _maybe_open_memory(project_id)
@@ -345,12 +439,18 @@ async def frame2frame_video_gen(
             if svc:
                 svc.close()
 
-        return return_dict
+        if return_dict.get("success"):
+            _cache_put(cache_key, return_dict)
+            return _to_tool_response(return_dict, True, "Video generated successfully.")
+        return _to_tool_response(return_dict, False, return_dict.get("error", "Video generation failed."))
 
-    return {"success": False, "error": f"Unsupported frame_to_frame_video model: {model}"}
+    return _to_tool_response(
+        {"success": False, "error": f"Unsupported frame_to_frame_video model: {model}"},
+        False,
+        f"Unsupported frame_to_frame_video model: {model}",
+    )
 
 
-@mcp.tool()
 async def merge2videos(video_paths: list[str]):
     """
     Merges multiple video files into a single video file.
@@ -376,6 +476,3 @@ async def merge2videos(video_paths: list[str]):
         message="Videos merged successfully."
     )
 
-
-if __name__ == "__main__":
-    mcp.run(transport="stdio")

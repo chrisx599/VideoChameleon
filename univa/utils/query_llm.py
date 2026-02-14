@@ -6,10 +6,7 @@ import cv2
 from typing import List, Optional, Tuple, Union, Dict
 import json
 import numpy as np
-from utils.text_process import extract_dict
-
-
-os.chdir(os.path.dirname(os.path.dirname(__file__)))
+from univa.utils.text_process import extract_dict
 config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config/mcp_tools_config")
 config_path = os.path.join(config_dir, "config.yaml")
 if not os.path.exists(config_path):

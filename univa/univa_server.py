@@ -61,32 +61,7 @@ async def initialize_global_agents() -> ReActSystem:
     if global_react_system:
         return global_react_system
     
-    config_path = config.get('mcp_servers_config')
-    
-    mcp_commands = []
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            mcp_config = json.load(f)
-        mcp_servers = mcp_config.get("mcpServers", {})
-        logger.info(f"Loaded {len(mcp_servers)} MCP servers from config")
-        
-        # construct mcp commands
-        for server_name, server_config in mcp_servers.items():
-            command = server_config.get("command", "")
-            args = server_config.get("args", [])
-            env = server_config.get("env", {})
-            
-            full_command = f"{command} {' '.join(args)}"
-            
-            mcp_commands.append(full_command)
-            logger.info(f"Registered MCP server '{server_name}': {full_command}")
-        
-    except FileNotFoundError:
-        logger.warning(f"MCP config file not found: {config_path}, using default")
-    except Exception as e:
-        logger.error(f"Error loading MCP config: {e}")
-    
-    global_react_system = ReActSystem(mcp_command=mcp_commands)
+    global_react_system = ReActSystem()
     await global_react_system.__aenter__()
     
     logger.info("Global ReActSystem initialized")

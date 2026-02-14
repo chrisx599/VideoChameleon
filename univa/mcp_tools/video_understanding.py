@@ -1,9 +1,8 @@
 import os
 import yaml
-from mcp.server.fastmcp import FastMCP
 
-from mcp_tools.base import ToolResponse, setup_logger
-from utils.query_llm import multimodal_query
+from univa.mcp_tools.base import ToolResponse, setup_logger
+from univa.utils.query_llm import multimodal_query
 
 
 
@@ -23,11 +22,7 @@ video_understanding_config = config.get('video_understanding', {})
 logger = setup_logger(__name__, "logs/mcp_tools", "video_understanding.log")
 logger.info(f"Loaded video_understanding_config: {video_understanding_config}")
 
-# Create an MCP server
-mcp = FastMCP("Video_Understanding_Server")
-
-
-@mcp.tool()
+# Tool function (direct, no MCP server)
 def vision2text_gen(prompt: str, multimodal_path: str, type: str) -> dict:
     """
     Analyzes and describes the content of a video or image based on a given prompt, converting visual information into text.
@@ -66,8 +61,3 @@ def vision2text_gen(prompt: str, multimodal_path: str, type: str) -> dict:
             success=False,
             message=f"An error occurred: {str(e)}"
         )
-
-
-
-if __name__ == "__main__":
-    mcp.run(transport="stdio")

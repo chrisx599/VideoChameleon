@@ -342,7 +342,7 @@ def memory_get_context_window(project_id: str, t_start: float, t_end: float, pad
 
 def get_memory_tools() -> List[Any]:
     """
-    Convenience for agent wiring: return a list of callables Agno can expose as tools.
+    Convenience for agent wiring: return a list of callables exposed as tools.
     """
     return [
         memory_init_project,

@@ -5,16 +5,13 @@ import io
 import numpy as np
 from PIL import Image
 import imageio
-from utils.query_llm import query_openai
+from univa.utils.query_llm import query_openai
 import logging
 import json
 import math
 
 from typing import List, Union
 from decord import VideoReader, cpu, DECORDError
-
-
-os.chdir(os.path.dirname(os.path.dirname(__file__)))
 config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config/mcp_tools_config")
 config_path = os.path.join(config_dir, "config.yaml")
 if not os.path.exists(config_path):

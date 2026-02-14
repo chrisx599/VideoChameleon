@@ -1,22 +1,41 @@
 import asyncio
 import json
 import os
-import re
 import traceback
 import uuid
 from pathlib import Path
 from dotenv import load_dotenv
 import inspect
+from types import SimpleNamespace
 
-from typing import List, Dict, Any, Optional, AsyncIterator
-from pydantic import BaseModel, Field
+from typing import List, Dict, Any, Optional, Sequence, Callable
 import logging
 
-from agno.agent import Agent
-from agno.tools.mcp import MCPTools, MultiMCPTools
-from agno.db.sqlite import SqliteDb
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from langchain_core.tools import BaseTool, StructuredTool
+from langgraph.prebuilt import create_react_agent
+from langgraph.checkpoint.memory import MemorySaver
+
+try:
+    from langgraph.checkpoint.sqlite import SqliteSaver  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    SqliteSaver = None
+
 from univa.memory.tools import get_memory_tools
 from univa.memory.context import build_memory_context, format_memory_context
+from univa.mcp_tools.video_gen import (
+    text2video_gen,
+    image2video_gen,
+    frame2frame_video_gen,
+    merge2videos,
+)
+from univa.mcp_tools.image_gen import (
+    text2image_generate,
+    image2image_generate,
+    sequential_image_gen,
+)
+from univa.mcp_tools.video_understanding import vision2text_gen
 
 def _init_env():
     base = Path(__file__).resolve().parents[1]
@@ -29,7 +48,6 @@ def _init_env():
 _init_env()
 
 from univa.config.config import config
-from univa.utils.model_factory import create_model
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -48,11 +66,133 @@ def load_prompt(prompt_name: str) -> str:
         logger.warning(f"Prompt file not found: {prompt_path}")
         return ""
 
+
+def _builtin_tool_callables() -> List[Callable[..., Any]]:
+    return [
+        text2video_gen,
+        image2video_gen,
+        frame2frame_video_gen,
+        merge2videos,
+        text2image_generate,
+        image2image_generate,
+        sequential_image_gen,
+        vision2text_gen,
+    ]
+
+
+def _parse_extra(extra: Optional[str | Dict[str, Any]]) -> Dict[str, Any]:
+    if isinstance(extra, dict):
+        return extra
+    if isinstance(extra, str) and extra.strip():
+        try:
+            return json.loads(extra)
+        except Exception:
+            return {}
+    return {}
+
+
+def _create_chat_model(
+    provider: str,
+    model_id: str,
+    api_key: Optional[str],
+    base_url: Optional[str],
+    extra_params: Optional[str | Dict[str, Any]] = None,
+) -> ChatOpenAI:
+    p = (provider or "").lower()
+    if p not in {"openai", "openai_compatible", "vllm", "sglang", "ollama", "azure", "azure_openai"}:
+        logger.warning(f"Provider '{provider}' not explicitly supported; using OpenAI-compatible ChatOpenAI.")
+
+    extra = _parse_extra(extra_params)
+    # Pull known top-level args to avoid burying them in model_kwargs.
+    temperature = extra.pop("temperature", None)
+    top_p = extra.pop("top_p", None)
+    max_completion_tokens = extra.pop("max_completion_tokens", None)
+    presence_penalty = extra.pop("presence_penalty", None)
+    frequency_penalty = extra.pop("frequency_penalty", None)
+
+    return ChatOpenAI(
+        model=model_id,
+        api_key=api_key or None,
+        base_url=base_url or None,
+        temperature=temperature,
+        top_p=top_p,
+        max_completion_tokens=max_completion_tokens,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
+        model_kwargs=extra or {},
+    )
+
+
+def _safe_json(val: Any) -> str:
+    try:
+        return json.dumps(val, ensure_ascii=True)
+    except Exception:
+        return str(val)
+
+
+def _normalize_tool_content(val: Any) -> Optional[Dict[str, Any]]:
+    if val is None:
+        return None
+    if isinstance(val, dict):
+        return val
+    if hasattr(val, "model_dump"):
+        try:
+            return val.model_dump()
+        except Exception:
+            pass
+    if isinstance(val, str):
+        try:
+            parsed = json.loads(val)
+            if isinstance(parsed, dict):
+                return parsed
+            return {"result": parsed}
+        except Exception:
+            return {"result": val}
+    return {"result": val}
+
+
+def _summarize_tool_result(payload: Dict[str, Any]) -> Dict[str, Any]:
+    keys = [
+        "success",
+        "output_path",
+        "output_url",
+        "segment_id",
+        "clip_id",
+        "last_frame_path",
+        "message",
+        "error",
+        "cached",
+    ]
+    summary = {k: payload.get(k) for k in keys if payload.get(k) is not None}
+    if summary:
+        return summary
+    if "content" in payload and isinstance(payload["content"], dict):
+        return _summarize_tool_result(payload["content"])
+    return payload
+
+
+def _trim_messages(messages: Sequence[Any], max_messages: Optional[int]) -> List[Any]:
+    if not messages:
+        return []
+    if not max_messages or max_messages <= 0:
+        return list(messages)
+
+    msgs = list(messages)
+    system = []
+    if msgs and getattr(msgs[0], "type", None) == "system":
+        system = [msgs[0]]
+        msgs = msgs[1:]
+    if len(msgs) <= max_messages:
+        return system + msgs
+    return system + msgs[-max_messages:]
+
+
 class ReActAgent:
-    def __init__(self, mcp_tools: MultiMCPTools, db_file: str = "react_agent.db"):
-        self.mcp_tools = mcp_tools
+    def __init__(self, db_file: str = "react_agent.db"):
         self.memory_tools = get_memory_tools()
-        
+        self.tool_callables = _builtin_tool_callables()
+        self.num_history_messages = 10
+
         # Load prompt
         base_instructions = load_prompt("react")
         if not base_instructions:
@@ -60,7 +200,7 @@ class ReActAgent:
                 "You are an intelligent agent capable of using tools to solve problems.\n"
                 "Think step-by-step. Use tools when necessary."
             )
-        
+
         # Get model configuration
         # Prioritize 'react_model_*' keys, fallback to 'act_model_*', then 'plan_model_*'
         provider = config.get('react_model_provider', config.get('act_model_provider', config.get('plan_model_provider', 'openai')))
@@ -68,77 +208,132 @@ class ReActAgent:
         api_key = config.get('react_model_api_key', config.get('act_model_api_key', config.get('plan_model_api_key', '')))
         base_url = config.get('react_model_base_url', config.get('act_model_base_url', config.get('plan_model_base_url', '')))
         extra_params = config.get('react_model_extra_params', config.get('act_model_extra_params', config.get('plan_model_extra_params', '')))
-        
-        # Format instructions with tool descriptions if needed
-        # Agno might handle tool descriptions automatically, but if the prompt has {tools_description}, we should fill it.
+
+        tool_call_limit = config.get("react_tool_call_limit", None)
+        try:
+            tool_call_limit = int(tool_call_limit) if tool_call_limit is not None else None
+        except Exception:
+            tool_call_limit = None
+        self.tool_call_limit = tool_call_limit
+
+        # Build tools first so we can include descriptions in prompt if needed.
+        self.tools = self._build_tools()
+
         formatted_instructions = base_instructions
         if "{tools_description}" in base_instructions:
             formatted_instructions = base_instructions.format(tools_description=self._get_available_tools_description())
-            
-        self.agent = Agent(
-            name="Univideo ReAct Agent",
-            model=create_model(
-                provider=provider,
-                model_id=model_id,
-                api_key=api_key,
-                base_url=base_url or None,
-                extra_params=extra_params,
-            ),
-            tools=[mcp_tools, *self.memory_tools],
-            instructions=formatted_instructions,
-            # agno>=? uses `db=` (not `storage=`) for persistence.
-            db=SqliteDb(db_file=db_file),
-            # Include recent chat history in the context sent to the model.
-            add_history_to_context=True,
-            num_history_messages=10,
-            markdown=True,
-            # enable_react=True # Assuming Agno defaults to ReAct/FunctionCalling with tools
+
+        self.model = _create_chat_model(
+            provider=provider,
+            model_id=model_id,
+            api_key=api_key,
+            base_url=base_url or None,
+            extra_params=extra_params,
         )
-    
+
+        self.checkpointer = self._get_checkpointer(db_file)
+
+        self.graph = create_react_agent(
+            self.model,
+            self.tools,
+            prompt=formatted_instructions,
+            pre_model_hook=self._pre_model_hook,
+            checkpointer=self.checkpointer,
+        )
+
+    def _get_checkpointer(self, db_file: str):
+        if SqliteSaver is not None:
+            try:
+                return SqliteSaver(db_file)
+            except Exception as exc:
+                logger.warning(f"Failed to initialize SqliteSaver ({db_file}); falling back to MemorySaver: {exc}")
+        return MemorySaver()
+
+    def _pre_model_hook(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        messages = state.get("messages", [])
+        trimmed = _trim_messages(messages, self.num_history_messages)
+        if trimmed is messages:
+            return state
+        return {**state, "messages": trimmed}
+
+    def _wrap_callable(self, func: Callable[..., Any]) -> BaseTool:
+        desc = (getattr(func, "__doc__", "") or "").strip().splitlines()
+        description = desc[0].strip() if desc else func.__name__
+        if inspect.iscoroutinefunction(func):
+            return StructuredTool.from_function(
+                coroutine=func,
+                name=func.__name__,
+                description=description or func.__name__,
+                parse_docstring=False,
+            )
+        return StructuredTool.from_function(
+            func=func,
+            name=func.__name__,
+            description=description or func.__name__,
+            parse_docstring=False,
+        )
+
+    def _build_tools(self) -> List[BaseTool]:
+        tools: List[BaseTool] = []
+        for func in self.tool_callables:
+            tools.append(self._wrap_callable(func))
+        for func in self.memory_tools:
+            tools.append(self._wrap_callable(func))
+        return tools
+
     def _get_available_tools_description(self) -> str:
         tools_info = []
-        if hasattr(self.mcp_tools, 'tools') and self.mcp_tools.tools:
-            for tool in self.mcp_tools.tools:
-                tools_info.append(f"- {tool.name}: {tool.description}")
-        if self.memory_tools:
-            for tool in self.memory_tools:
-                tool_name = getattr(tool, "__name__", str(tool))
-                tool_doc = (getattr(tool, "__doc__", "") or "").strip().splitlines()
-                tool_desc = tool_doc[0].strip() if tool_doc else ""
-                tools_info.append(f"- {tool_name}: {tool_desc}")
+        for tool in self.tools:
+            tools_info.append(f"- {tool.name}: {tool.description}")
         return "\n".join(tools_info) if tools_info else "No tools available"
 
-    async def run(self, input_text: str, session_id: str = None, stream: bool = False):
-        # agno.Agent.arun has a dual API:
-        # - stream=False -> returns an awaitable (coroutine) that yields RunOutput
-        # - stream=True  -> returns an async generator (NOT awaitable)
-        result = self.agent.arun(input_text, stream=stream, session_id=session_id)
-        if inspect.isawaitable(result):
-            return await result
-        return result
+    def _make_config(self, session_id: Optional[str]) -> Dict[str, Any]:
+        cfg: Dict[str, Any] = {"configurable": {"thread_id": session_id or "default"}}
+        if self.tool_call_limit is not None:
+            cfg["recursion_limit"] = self.tool_call_limit
+        return cfg
+
+    async def run(
+        self,
+        input_text: str,
+        session_id: str = None,
+        stream: bool = False,
+        stream_events: bool = False,
+    ):
+        config = self._make_config(session_id)
+        inputs = {"messages": [HumanMessage(content=input_text)]}
+        if stream:
+            if stream_events:
+                return self.graph.astream_events(inputs, config=config, version="v2")
+            return self.graph.astream(inputs, config=config)
+
+        output = await self.graph.ainvoke(inputs, config=config)
+        content = self._extract_response_content(output)
+        return SimpleNamespace(content=content, output=output)
+
+    async def get_state(self, session_id: str):
+        try:
+            return await self.graph.aget_state(self._make_config(session_id))
+        except Exception:
+            return None
+
+    def _extract_response_content(self, output: Dict[str, Any]) -> str:
+        messages = output.get("messages", []) if isinstance(output, dict) else []
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage) and msg.content:
+                return msg.content
+        for msg in reversed(messages):
+            if isinstance(msg, ToolMessage):
+                payload = _normalize_tool_content(msg.content)
+                if payload is None:
+                    continue
+                summary = _summarize_tool_result(payload)
+                return _safe_json(summary)
+        return ""
+
 
 class ReActSystem:
-    def __init__(self, mcp_command: List[str], db_file: str = "video_agent_system"):
-        mcp_tools_path = config.get('mcp_tools_path') or str(Path(__file__).resolve().parent)
-
-        # Pass through the current environment so MCP tool subprocesses can read API keys
-        # loaded from `.env` (e.g. WAVESPEED_API_KEY, LLM_OPENAI_API_KEY).
-        mcp_env = dict(os.environ)
-        mcp_env.update(
-            {
-                "PYTHONPATH": mcp_tools_path,
-                "CWD": mcp_tools_path,
-            }
-        )
-
-        self.mcp_tools = MultiMCPTools(
-            commands=mcp_command,
-            env={
-                **mcp_env
-            },
-            timeout_seconds=600,
-            refresh_connection=True
-        )
+    def __init__(self, db_file: str = "video_agent_system"):
         self.db_file = db_file
         self.agent: Optional[ReActAgent] = None
 
@@ -170,12 +365,11 @@ class ReActSystem:
             return user_request
     
     async def __aenter__(self):
-        await self.mcp_tools.connect()
-        self.agent = ReActAgent(self.mcp_tools, f"{self.db_file}.db")
+        self.agent = ReActAgent(f"{self.db_file}.db")
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.mcp_tools.close()
+        return None
     
     async def execute_task(
         self,
@@ -230,22 +424,73 @@ class ReActSystem:
                 pad_sec=pad_sec,
                 max_segments=max_segments,
             )
-            # Streaming response from Agno
-            stream_gen = await self.agent.run(request_with_ctx, session_id=session_id, stream=True)
-            
-            async for chunk in stream_gen:
+            # Streaming response from LangGraph (with events so we can surface tool calls/results)
+            stream_gen = self.agent.run(
+                request_with_ctx,
+                session_id=session_id,
+                stream=True,
+                stream_events=True,
+            )
+            if inspect.isawaitable(stream_gen):
+                stream_gen = await stream_gen
+
+            got_model_content = False
+            last_tool_summary: Optional[Dict[str, Any]] = None
+            reported_tool_summary = False
+
+            async for event in stream_gen:
                 content = ""
-                # Handle different chunk types from Agno
-                if isinstance(chunk, str):
-                    content = chunk
-                elif hasattr(chunk, 'content') and chunk.content:
-                    content = chunk.content
-                elif isinstance(chunk, dict) and 'content' in chunk:
-                    content = chunk['content']
-                
+                event_type = event.get("event") if isinstance(event, dict) else None
+                data = event.get("data", {}) if isinstance(event, dict) else {}
+
+                if event_type == "on_chat_model_stream":
+                    chunk = data.get("chunk")
+                    chunk_content = getattr(chunk, "content", None) if chunk is not None else None
+                    if chunk_content:
+                        content = chunk_content
+                        got_model_content = True
+                elif event_type == "on_chat_model_end":
+                    output = data.get("output")
+                    output_content = getattr(output, "content", None) if output is not None else None
+                    if output_content:
+                        content = output_content
+                        got_model_content = True
+                elif event_type == "on_tool_start":
+                    tool_name = event.get("name") or data.get("name")
+                    tool_args = data.get("input") or {}
+                    if tool_name:
+                        content = f"\n[tool_call] {tool_name} {_safe_json(tool_args)}\n"
+                elif event_type == "on_tool_end":
+                    tool_name = event.get("name") or data.get("name")
+                    payload = _normalize_tool_content(data.get("output"))
+                    if payload is not None:
+                        summary = _summarize_tool_result(payload)
+                        last_tool_summary = summary
+                        if tool_name:
+                            summary = {"tool": tool_name, **summary}
+                        content = f"\n[tool_result] {_safe_json(summary)}\n"
+                        reported_tool_summary = True
+
                 if content:
                     yield {'type': 'content', 'content': content}
-            
+
+            if not last_tool_summary or not (
+                last_tool_summary.get("output_path") or last_tool_summary.get("output_url")
+            ):
+                session_summary = await self._extract_last_tool_summary_from_state(session_id)
+                if session_summary:
+                    last_tool_summary = session_summary
+                    if not reported_tool_summary:
+                        yield {
+                            'type': 'content',
+                            'content': f"\n[tool_result] {_safe_json(last_tool_summary)}\n",
+                        }
+
+            if not got_model_content and last_tool_summary:
+                yield {
+                    'type': 'content',
+                    'content': f"\nResult: {_safe_json(last_tool_summary)}\n",
+                }
             yield {'type': 'finish', 'session_id': session_id}
             
         except Exception as e:
@@ -256,41 +501,28 @@ class ReActSystem:
                 'content': str(e)
             }
 
+    async def _extract_last_tool_summary_from_state(self, session_id: str) -> Optional[Dict[str, Any]]:
+        if not self.agent:
+            return None
+        snapshot = await self.agent.get_state(session_id)
+        if not snapshot:
+            return None
+        messages = snapshot.values.get("messages", []) if hasattr(snapshot, "values") else []
+        for msg in reversed(messages):
+            if isinstance(msg, ToolMessage):
+                payload = _normalize_tool_content(msg.content)
+                if payload is None:
+                    continue
+                summary = _summarize_tool_result(payload)
+                tool_name = getattr(msg, "name", None)
+                if tool_name:
+                    summary = {"tool": tool_name, **summary}
+                return summary
+        return None
+
 
 async def initialize_global_agents() -> ReActSystem:
-    # load MCP server configurations
-    config_path = config.get('mcp_servers_config')
-    
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            mcp_config = json.load(f)
-        
-        mcp_servers = mcp_config.get("mcpServers", {})
-        logger.info(f"Loaded {len(mcp_servers)} MCP servers from config")
-        
-        # construct mcp commands
-        mcp_commands = []
-        for server_name, server_config in mcp_servers.items():
-            command = server_config.get("command", "")
-            args = server_config.get("args", [])
-            
-            # full command with args
-            full_command = f"{command} {' '.join(args)}"
-            
-            mcp_commands.append(full_command)
-            logger.info(f"Registered MCP server '{server_name}': {full_command}")
-        
-        if not mcp_commands:
-             mcp_commands = ["npx -y @modelcontextprotocol/server-filesystem /tmp"]
-        
-    except FileNotFoundError:
-        logger.warning(f"MCP config file not found: {config_path}, using default")
-        mcp_commands = ["npx -y @modelcontextprotocol/server-filesystem /tmp"]
-    except Exception as e:
-        logger.error(f"Error loading MCP config: {e}, using default")
-        mcp_commands = ["npx -y @modelcontextprotocol/server-filesystem /tmp"]
-    
-    global_system = ReActSystem(mcp_command=mcp_commands)
+    global_system = ReActSystem()
     await global_system.__aenter__()
     
     logger.info("Global ReActSystem initialized")
@@ -464,4 +696,10 @@ async def main():
 
 
 if __name__ == "__main__":
+    # import debugpy
+    # debugpy.listen(("0.0.0.0", 5678))
+    # print("Waiting for debugger attach...")
+    # debugpy.wait_for_client()
+
+
     asyncio.run(main())

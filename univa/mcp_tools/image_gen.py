@@ -2,11 +2,10 @@ import base64
 import yaml
 import os
 from datetime import datetime
-from mcp.server.fastmcp import FastMCP
 
-from mcp_tools.base import ToolResponse, setup_logger
-from utils.image_process import download_image
-from utils.wavespeed_api import text_to_image_generate, seedream_v4_edit, seedream_v4_sequential_edit
+from univa.mcp_tools.base import ToolResponse, setup_logger
+from univa.utils.image_process import download_image
+from univa.utils.wavespeed_api import text_to_image_generate, seedream_v4_edit, seedream_v4_sequential_edit
 
 # Load configuration
 # config_path = "config/mcp_tools_config/config.yaml"
@@ -29,11 +28,9 @@ def _get_wavespeed_api_key() -> str:
 
 # Configure logging
 logger = setup_logger(__name__, "logs/mcp_tools", "image_gen.log")
-mcp = FastMCP("Image_Generation_Server")
 
 
 
-@mcp.tool()
 def text2image_generate(prompt: str)-> ToolResponse:
     """
     Generates a new image based on a textual prompt.
@@ -72,7 +69,6 @@ def text2image_generate(prompt: str)-> ToolResponse:
 
 
 
-@mcp.tool()
 def image2image_generate(prompt: str, image_path: str|list[str]):
     """
     Generates a new image based on a text prompt and an input image or a list of images, while maintaining consistency with characters or styles from the reference images.
@@ -112,7 +108,6 @@ def image2image_generate(prompt: str, image_path: str|list[str]):
     )
 
 
-@mcp.tool()
 def sequential_image_gen(prompt: str, images: list[str], images_num: int = 2) -> str:
     """
     Generates a series of same style or consistency images or based on input images and a prompt.
@@ -168,6 +163,3 @@ def sequential_image_gen(prompt: str, images: list[str], images_num: int = 2) ->
         )
 
 
-
-if __name__ == "__main__":
-    mcp.run(transport="stdio")

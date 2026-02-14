@@ -229,12 +229,12 @@ def text_to_video_generate(api_key, prompt, save_path: str = None, model="seedan
             if status == "completed":
                 end = time.time()
                 logger.info(f"Task completed in {end - begin} seconds.")
-                url = result["outputs"][0]
-                logger.info(f"Task completed. URL: {url}")
+                output_url = result["outputs"][0]
+                logger.info(f"Task completed. URL: {output_url}")
                 time_ft = datetime.now().strftime("%m%d%H%M%S")
-                url_name = url.split("/")[-1]
+                url_name = output_url.split("/")[-1]
                 output_filename = save_path if save_path else f"{time_ft}_{url_name}"
-                resp = requests.get(url, stream=True)
+                resp = requests.get(output_url, stream=True)
                 resp.raise_for_status()
                 with open(output_filename, "wb") as f:
                     for chunk in resp.iter_content(8192):
@@ -242,6 +242,7 @@ def text_to_video_generate(api_key, prompt, save_path: str = None, model="seedan
                 return {
                     'success': True,
                     'output_path': output_filename,
+                    'output_url': output_url,
                     'message': "Video generated successfully."
                 }
             elif status == "failed":
@@ -306,12 +307,12 @@ def image_to_video_generate(api_key, prompt, image, save_path: str = None, model
             if status == "completed":
                 end = time.time()
                 logger.info(f"Task completed in {end - begin} seconds.")
-                url = result["outputs"][0]
-                logger.info(f"Task completed. URL: {url}")
+                output_url = result["outputs"][0]
+                logger.info(f"Task completed. URL: {output_url}")
                 time_ft = datetime.now().strftime("%m%d%H%M%S")
-                url_name = url.split("/")[-1]
+                url_name = output_url.split("/")[-1]
                 output_filename = save_path if save_path else f"{time_ft}_{url_name}"
-                resp = requests.get(url, stream=True)
+                resp = requests.get(output_url, stream=True)
                 resp.raise_for_status()
                 with open(output_filename, "wb") as f:
                     for chunk in resp.iter_content(8192):
@@ -319,6 +320,7 @@ def image_to_video_generate(api_key, prompt, image, save_path: str = None, model
                 return {
                     'success': True,
                     'output_path': output_filename,
+                    'output_url': output_url,
                     'message': "Video generated successfully."
                 }
             elif status == "failed":
@@ -1044,6 +1046,7 @@ def hailuo_i2v_pro(api_key: str, prompt: str, image: str, end_image: str = None,
                     return {
                         'success': True,
                         'output_path': save_path,
+                        'output_url': output_url,
                         'message': "Video generated successfully."
                     }
                 else:
@@ -1068,5 +1071,3 @@ def hailuo_i2v_pro(api_key: str, prompt: str, image: str, end_image: str = None,
             }
 
         time.sleep(0.5)
-
-
