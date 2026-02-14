@@ -875,7 +875,7 @@ async def main():
                             tool_name = event.get('name', 'Unknown Tool')
                             tool_args = event.get('args', {})
                             status_text = f"Running {tool_name}..."
-                            with log_context(tool=tool_name):
+                            with log_context(session_id=session_id, project_id=project_id, tool=tool_name):
                                 logger.info("tool_start | args=%s", _safe_json(tool_args))
                             live.update(generate_group())
                         
@@ -883,7 +883,7 @@ async def main():
                             tool_name = event.get('name', 'Tool')
                             output = event.get('output', {})
                             status_text = "Thinking..."
-                            with log_context(tool=tool_name):
+                            with log_context(session_id=session_id, project_id=project_id, tool=tool_name):
                                 logger.info("tool_end | output=%s", _safe_json(output))
                             live.update(generate_group())
 
