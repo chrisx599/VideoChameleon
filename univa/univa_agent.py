@@ -459,7 +459,8 @@ class ReActSystem:
                     tool_name = event.get("name") or data.get("name")
                     tool_args = data.get("input") or {}
                     if tool_name:
-                        content = f"\n[tool_call] {tool_name} {_safe_json(tool_args)}\n"
+                        yield {'type': 'tool_start', 'name': tool_name, 'args': tool_args}
+
                 elif event_type == "on_tool_end":
                     tool_name = event.get("name") or data.get("name")
                     payload = _normalize_tool_content(data.get("output"))
@@ -467,8 +468,8 @@ class ReActSystem:
                         summary = _summarize_tool_result(payload)
                         last_tool_summary = summary
                         if tool_name:
-                            summary = {"tool": tool_name, **summary}
-                        content = f"\n[tool_result] {_safe_json(summary)}\n"
+                            # summary = {"tool": tool_name, **summary} # Optional: include name in summary if needed
+                            yield {'type': 'tool_end', 'name': tool_name, 'output': summary}
                         reported_tool_summary = True
 
                 if content:
@@ -544,36 +545,35 @@ async def main():
     root_logger.setLevel(logging.INFO)
     logging.captureWarnings(True)
 
+    # Import rich here to ensure it's available
+    try:
+        from rich.console import Console, Group
+        from rich.markdown import Markdown
+        from rich.panel import Panel
+        from rich.live import Live
+        from rich.spinner import Spinner
+        from rich.text import Text
+        from rich.json import JSON
+    except ImportError:
+        print("Error: 'rich' library not found. Please install it with 'pip install rich'.")
+        return
+
+    console = Console()
     system = await initialize_global_agents()
     
     try:
-        is_tty = os.isatty(0)
-        def _c(s: str, code: str) -> str:
-            if not is_tty:
-                return s
-            return f"\033[{code}m{s}\033[0m"
-
-        async def _spinner(stop_event: asyncio.Event) -> None:
-            if not is_tty:
-                return
-            frames = ["|", "/", "-", "\\"]
-            i = 0
-            while not stop_event.is_set():
-                print(f"\r{_c('waiting ' + frames[i % len(frames)], '2')}", end="", flush=True)
-                i += 1
-                await asyncio.sleep(0.12)
-            # clear line
-            print("\r" + " " * 40 + "\r", end="", flush=True)
-
         def _banner() -> None:
-            print(_c("UniVA ReAct CLI", "1;36"))
-            print(_c("Type /help for commands. Type 'exit' or 'quit' to stop.", "2"))
-            print(_c("-" * 64, "2"))
+            console.print(Panel.fit(
+                "[bold cyan]UniVA ReAct CLI[/bold cyan]\n"
+                "[dim]Type /help for commands. Type 'exit' or 'quit' to stop.[/dim]",
+                border_style="cyan"
+            ))
 
-        def _context_line() -> None:
+        def _print_context() -> None:
             win = f"{t_start},{t_end}" if t_start is not None and t_end is not None else "none"
             pid = project_id if project_id else "none"
-            print(_c(f"[session={session_id}] [project={pid}] [window={win}] [pad={pad_sec}] [maxseg={max_segments}]", "2"))
+            info = f"[dim]Session: [bold]{session_id}[/] | Project: [bold]{pid}[/] | Window: [bold]{win}[/] | Pad: {pad_sec}s | MaxSeg: {max_segments}[/]"
+            console.print(info)
 
         _banner()
         session_id = f"session_{uuid.uuid4().hex[:8]}"
@@ -582,115 +582,155 @@ async def main():
         t_end = None
         pad_sec = 8.0
         max_segments = 12
+
         while True:
             try:
-                _context_line()
-                input_prompt = input(_c(">>> ", "1;32"))
+                _print_context()
+                input_prompt = console.input("[bold green]>>> [/]")
+                
                 if input_prompt.lower() in ['exit', 'quit']:
                     break
                 
                 if not input_prompt.strip():
                     continue
+
                 if input_prompt.startswith("/"):
                     parts = input_prompt.strip().split()
                     cmd = parts[0].lower()
                     if cmd == "/help":
-                        print(_c("Commands:", "1"))
-                        print("  /session <id>        set session id")
-                        print("  /new                 create a new session id")
-                        print("  /project <id>        set project id for memory context")
-                        print("  /window <t0> <t1>    set focus window seconds")
-                        print("  /clearwindow         clear focus window")
-                        print("  /pad <sec>           set context pad seconds (default 8.0)")
-                        print("  /maxseg <n>          set max segments when no window (default 12)")
+                        console.print(Panel(
+                            "  /session <id>        set session id\n"
+                            "  /new                 create a new session id\n"
+                            "  /project <id>        set project id for memory context\n"
+                            "  /window <t0> <t1>    set focus window seconds\n"
+                            "  /clearwindow         clear focus window\n"
+                            "  /pad <sec>           set context pad seconds (default 8.0)\n"
+                            "  /maxseg <n>          set max segments when no window (default 12)",
+                            title="Commands",
+                            border_style="yellow"
+                        ))
                         continue
                     if cmd == "/session":
                         if len(parts) >= 2:
                             session_id = parts[1]
-                            print(f"session_id set to {session_id}")
+                            console.print(f"[green]session_id set to {session_id}[/]")
                         else:
-                            print(f"session_id: {session_id}")
+                            console.print(f"session_id: {session_id}")
                         continue
                     if cmd == "/new":
                         session_id = f"session_{uuid.uuid4().hex[:8]}"
-                        print(f"session_id set to {session_id}")
+                        console.print(f"[green]session_id set to {session_id}[/]")
                         continue
                     if cmd == "/project" and len(parts) >= 2:
                         project_id = parts[1]
-                        print(f"project_id set to {project_id}")
+                        console.print(f"[green]project_id set to {project_id}[/]")
                         continue
                     if cmd == "/window" and len(parts) >= 3:
                         try:
                             t_start = float(parts[1])
                             t_end = float(parts[2])
-                            print(f"window set to t_start={t_start} t_end={t_end}")
+                            console.print(f"[green]window set to t_start={t_start} t_end={t_end}[/]")
                         except ValueError:
-                            print("invalid /window args, expected floats")
+                            console.print("[red]invalid /window args, expected floats[/]")
                         continue
                     if cmd == "/clearwindow":
                         t_start = None
                         t_end = None
-                        print("window cleared")
+                        console.print("[green]window cleared[/]")
                         continue
                     if cmd == "/pad" and len(parts) >= 2:
                         try:
                             pad_sec = float(parts[1])
-                            print(f"pad_sec set to {pad_sec}")
+                            console.print(f"[green]pad_sec set to {pad_sec}[/]")
                         except ValueError:
-                            print("invalid /pad arg, expected float")
+                            console.print("[red]invalid /pad arg, expected float[/]")
                         continue
                     if cmd == "/maxseg" and len(parts) >= 2:
                         try:
                             max_segments = int(parts[1])
-                            print(f"max_segments set to {max_segments}")
+                            console.print(f"[green]max_segments set to {max_segments}[/]")
                         except ValueError:
-                            print("invalid /maxseg arg, expected int")
+                            console.print("[red]invalid /maxseg arg, expected int[/]")
                         continue
-                    print("unknown command, use /help")
+                    console.print("[red]unknown command, use /help[/]")
                     continue
 
-                print(_c("-" * 64, "2"))
-                print(
-                    _c(
-                        f"processing: {input_prompt} ... (session_id: {session_id}, project_id: {project_id}, window: {t_start},{t_end})",
-                        "2",
-                    )
-                )
+                console.print(f"[dim]Processing...[/]")
                 
-                # Use stream for CLI feedback
-                print(_c("Output:", "1"))
-                spinner_stop = asyncio.Event()
-                spinner_task = asyncio.create_task(_spinner(spinner_stop))
-                got_content = False
-                async for event in system.execute_task_stream(
-                    session_id,
-                    input_prompt,
-                    project_id=project_id,
-                    t_start=t_start,
-                    t_end=t_end,
-                    pad_sec=pad_sec,
-                    max_segments=max_segments,
-                ):
-                    if event['type'] == 'content':
-                        if not got_content:
-                            got_content = True
-                            spinner_stop.set()
-                            await spinner_task
-                        print(event['content'], end="", flush=True)
-                    elif event['type'] == 'error':
-                        spinner_stop.set()
-                        await spinner_task
-                        print(f"\nError: {event['content']}")
-                if not spinner_stop.is_set():
-                    spinner_stop.set()
-                    await spinner_task
+                # Renderables accumulator for the chat history of this turn
+                renderables = []
+                current_text = ""
+                active_tool = None
                 
-                print("\n" + _c("-" * 64, "2"))
+                def generate_group():
+                    items = list(renderables)
+                    if current_text:
+                        items.append(Markdown(current_text))
+                    if active_tool:
+                        items.append(active_tool)
+                    return Group(*items)
+
+                with Live(generate_group(), console=console, refresh_per_second=10) as live:
+                    async for event in system.execute_task_stream(
+                        session_id,
+                        input_prompt,
+                        project_id=project_id,
+                        t_start=t_start,
+                        t_end=t_end,
+                        pad_sec=pad_sec,
+                        max_segments=max_segments,
+                    ):
+                        if event['type'] == 'content':
+                            current_text += event['content']
+                            live.update(generate_group())
+                        
+                        elif event['type'] == 'tool_start':
+                            tool_name = event.get('name', 'Unknown Tool')
+                            tool_args = event.get('args', {})
+                            # Show spinner
+                            active_tool = Spinner("dots", text=f"Running [bold cyan]{tool_name}[/]...", style="cyan")
+                            live.update(generate_group())
+                        
+                        elif event['type'] == 'tool_end':
+                            # Convert output to a nice panel
+                            tool_name = event.get('name', 'Tool')
+                            output = event.get('output', {})
+                            
+                            # Add current text to renderables so it "commits" before the tool output
+                            if current_text:
+                                renderables.append(Markdown(current_text))
+                                current_text = ""
+                            
+                            # Create a panel for the tool result
+                            # Try to format JSON if possible, otherwise string
+                            try:
+                                json_str = json.dumps(output, indent=2)
+                                content = JSON(json_str)
+                            except Exception:
+                                content = str(output)
+                                
+                            panel = Panel(
+                                content,
+                                title=f"[bold magenta]Tool Result: {tool_name}[/]",
+                                border_style="magenta",
+                                expand=False
+                            )
+                            renderables.append(panel)
+                            active_tool = None
+                            live.update(generate_group())
+
+                        elif event['type'] == 'error':
+                            console.print(f"[bold red]Error:[/bold red] {event['content']}")
+                            break
+                            
+                console.print() # Newline after turn
 
             except KeyboardInterrupt:
                 break
             except Exception as e:
                 logger.error(f"error: {e}")
+                console.print(f"[bold red]System Error:[/bold red] {e}")
+                console.print_exception()
     finally:
         await system.__aexit__(None, None, None)
 
