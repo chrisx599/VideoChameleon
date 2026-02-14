@@ -629,6 +629,46 @@ class ProjectMemoryStore:
         )
         return [dict(r) for r in cur.fetchall()]
 
+    def update_asset_caption(
+        self,
+        asset_id: str,
+        caption: str,
+        entity_summary: Optional[str] = None,
+        tags: Optional[str] = None,
+    ) -> bool:
+        ts = self._now()
+        cur = self.conn.execute(
+            """
+            UPDATE asset_index
+            SET caption=?,
+                entity_summary=COALESCE(?, entity_summary),
+                tags=COALESCE(?, tags),
+                updated_at=?
+            WHERE asset_id=?
+            """,
+            (caption, entity_summary, tags, ts, asset_id),
+        )
+        if cur.rowcount <= 0:
+            return False
+        row = self.conn.execute(
+            "SELECT rowid, prompt, caption, entity_summary, tags FROM asset_index WHERE asset_id=?",
+            (asset_id,),
+        ).fetchone()
+        if not row:
+            return False
+        try:
+            self._update_asset_fts(
+                int(row["rowid"]),
+                prompt=row["prompt"],
+                caption=row["caption"],
+                entity_summary=row["entity_summary"],
+                tags=row["tags"],
+            )
+            self.conn.execute("UPDATE asset_index SET needs_reindex=0 WHERE asset_id=?", (asset_id,))
+        except Exception:
+            self.conn.execute("UPDATE asset_index SET needs_reindex=1 WHERE asset_id=?", (asset_id,))
+        return True
+
     # --- artifacts ---
     def add_artifact(
         self,

@@ -298,6 +298,25 @@ def memory_search_assets(project_id: str, query: str, limit: int = 10) -> Dict[s
     }
 
 
+def memory_update_asset_caption(
+    project_id: str,
+    asset_id: str,
+    caption: str,
+    entity_summary: str = "",
+    tags: str = "",
+) -> Dict[str, Any]:
+    """
+    Update caption and optional entity summary/tags for an asset.
+    """
+    ok = _svc(project_id).update_asset_caption(
+        asset_id=asset_id,
+        caption=caption,
+        entity_summary=entity_summary or None,
+        tags=tags or None,
+    )
+    return {"project_id": project_id, "asset_id": asset_id, "updated": ok}
+
+
 def memory_get_latest_artifact(
     project_id: str,
     segment_id: str = "",
@@ -379,6 +398,7 @@ def get_memory_tools() -> List[Any]:
         memory_add_artifact,
         memory_list_artifacts,
         memory_search_assets,
+        memory_update_asset_caption,
         memory_get_latest_artifact,
         memory_get_last_frame,
         memory_delete_artifact,

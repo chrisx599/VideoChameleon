@@ -205,6 +205,20 @@ class ProjectMemoryService:
     def search_assets(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
         return self.store.search_assets(query=query, limit=limit)
 
+    def update_asset_caption(
+        self,
+        asset_id: str,
+        caption: str,
+        entity_summary: Optional[str] = None,
+        tags: Optional[str] = None,
+    ) -> bool:
+        return self.store.update_asset_caption(
+            asset_id=asset_id,
+            caption=caption,
+            entity_summary=entity_summary,
+            tags=tags,
+        )
+
     def get_entity_states_at(self, t: float) -> List[Dict[str, Any]]:
         return self.store.get_entity_states_at(t=t)
 
