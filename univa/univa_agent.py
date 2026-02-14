@@ -605,19 +605,19 @@ class ReActSystem:
                             if not reported_tool_summary:
                                 yield {
                                     'type': 'content',
-                                    'content': f\"\\n[tool_result] {_safe_json(last_tool_summary)}\\n\",
+                                    'content': f"\n[tool_result] {_safe_json(last_tool_summary)}\n",
                                 }
 
                     # Only emit a textual fallback if we never reported any tool summary.
                     if not got_model_content and last_tool_summary and not reported_tool_summary:
                         yield {
                             'type': 'content',
-                            'content': f\"\\nResult: {_safe_json(last_tool_summary)}\\n\",
+                            'content': f"\nResult: {_safe_json(last_tool_summary)}\n",
                         }
                     yield {'type': 'finish', 'session_id': session_id}
 
                 except Exception as e:
-                    logger.error(f\"[Stream] Error in execute_task_stream: {e}\")
+                    logger.error(f"[Stream] Error in execute_task_stream: {e}")
                     logger.error(traceback.format_exc())
                     yield {
                         'type': 'error',
