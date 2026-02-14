@@ -20,16 +20,13 @@ import { FPS_PRESETS } from "@/constants/timeline-constants";
 import { useProjectStore } from "@/stores/project-store";
 import { useEditorStore } from "@/stores/editor-store";
 import { useAspectRatio } from "@/hooks/use-aspect-ratio";
-import { useChat } from "@/components/chat/useChat";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { colors } from "@/data/colors/solid";
 import { patternCraftGradients } from "@/data/colors/pattern-craft";
-import { PipetteIcon, Key, Check, AlertCircle } from "lucide-react";
-import { useMemo, memo, useCallback, useState, useEffect } from "react";
+import { PipetteIcon } from "lucide-react";
+import { useMemo, memo, useCallback } from "react";
 import { syntaxUIGradients } from "@/data/colors/syntax-ui";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 
 export function SettingsView() {
   return <ProjectSettingsTabs />;
@@ -63,41 +60,6 @@ function ProjectInfoView() {
   const { activeProject, updateProjectFps } = useProjectStore();
   const { canvasPresets, setCanvasSize } = useEditorStore();
   const { getDisplayName } = useAspectRatio();
-  const { accessCode, handleAccessCodeChange, fetchAccessCodeStatus } = useChat();
-  
-  const [inputValue, setInputValue] = useState(accessCode);
-  const [showSuccess, setShowSuccess] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [codeStatus, setCodeStatus] = useState<any>(null);
-  const [isLoadingStatus, setIsLoadingStatus] = useState(false);
-
-  // 当 accessCode 从 localStorage 恢复后，同步更新 inputValue
-  useEffect(() => {
-    setInputValue(accessCode);
-  }, [accessCode]);
-
-  // 获取access code状态
-  useEffect(() => {
-    const loadStatus = async () => {
-      if (accessCode) {
-        setIsLoadingStatus(true);
-        try {
-          const status = await fetchAccessCodeStatus();
-          console.log('Access code status loaded:', status);
-          setCodeStatus(status);
-        } catch (error) {
-          console.error('Failed to load access code status:', error);
-          setCodeStatus(null);
-        } finally {
-          setIsLoadingStatus(false);
-        }
-      } else {
-        setCodeStatus(null);
-      }
-    };
-    
-    loadStatus();
-  }, [accessCode]);
 
   const handleAspectRatioChange = (value: string) => {
     const preset = canvasPresets.find((p) => p.name === value);
@@ -109,36 +71,6 @@ function ProjectInfoView() {
   const handleFpsChange = (value: string) => {
     const fps = parseFloat(value);
     updateProjectFps(fps);
-  };
-
-  const handleSaveAccessCode = () => {
-    const trimmedCode = inputValue.trim();
-    
-    if (!trimmedCode) {
-      setError('The access code cannot be empty.');
-      return;
-    }
-
-    // 验证 UUID 格式
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(trimmedCode)) {
-      setError('The access code format is incorrect; it should be in UUID format.');
-      return;
-    }
-
-    handleAccessCodeChange(trimmedCode);
-    setError(null);
-    setShowSuccess(true);
-    
-    setTimeout(() => {
-      setShowSuccess(false);
-    }, 2000);
-  };
-
-  const handleClearAccessCode = () => {
-    setInputValue('');
-    handleAccessCodeChange('');
-    setError(null);
   };
 
   return (
@@ -192,145 +124,6 @@ function ProjectInfoView() {
         </PropertyItemValue>
       </PropertyItem>
 
-      <Separator className="my-2" />
-
-      <PropertyGroup title="Access code" defaultExpanded={true}>
-        <div className="flex flex-col gap-3">
-          {/* Status */}
-          <div className="flex items-center justify-between p-2 bg-muted rounded text-xs">
-            <span className="text-muted-foreground">Status</span>
-            {accessCode ? (
-              <div className="flex items-center gap-1 text-green-600">
-                <Check className="w-3 h-3" />
-                <span>Configured</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1 text-yellow-600">
-                <AlertCircle className="w-3 h-3" />
-                <span>Not configured</span>
-              </div>
-            )}
-          </div>
-
-          {/* Access Code Status Details */}
-          {accessCode && codeStatus && !isLoadingStatus && (
-            <div className="flex flex-col gap-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-gray-700">Enabled</span>
-                <span className={codeStatus.enabled ? "text-green-600 font-medium" : "text-red-600 font-medium"}>
-                  {codeStatus.enabled ? "Yes" : "No"}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-gray-700">Total Usage</span>
-                <span className="font-medium text-gray-900">{codeStatus.usage_count}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-gray-700">Conversations Used</span>
-                <span className="font-medium text-gray-900">{codeStatus.conversation_count}</span>
-              </div>
-              {codeStatus.max_conversations !== null && (
-                <>
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-700">Max Conversations</span>
-                    <span className="font-medium text-gray-900">{codeStatus.max_conversations}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-700">Remaining</span>
-                    <span className={cn(
-                      "font-medium",
-                      codeStatus.remaining_conversations === 0 ? "text-red-600" :
-                      codeStatus.remaining_conversations && codeStatus.remaining_conversations < 5 ? "text-yellow-600" :
-                      "text-green-600"
-                    )}>
-                      {codeStatus.remaining_conversations}
-                    </span>
-                  </div>
-                </>
-              )}
-              {codeStatus.max_conversations === null && (
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-700">Limit</span>
-                  <span className="font-medium text-green-600">Unlimited</span>
-                </div>
-              )}
-              {codeStatus.last_used && (
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-700">Last Used</span>
-                  <span className="text-[10px] text-gray-900">
-                    {new Date(codeStatus.last_used).toLocaleString()}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Loading Status */}
-          {accessCode && isLoadingStatus && (
-            <div className="flex items-center justify-center p-2 bg-muted rounded text-xs">
-              <span className="text-muted-foreground">Loading status...</span>
-            </div>
-          )}
-
-          {/* Input */}
-          <div className="space-y-2">
-            <Input
-              type="text"
-              value={inputValue}
-              onChange={(e) => {
-                setInputValue(e.target.value);
-                setError(null);
-              }}
-              placeholder="Please input the access code (UUID format)"
-              className="text-xs h-8"
-            />
-            <p className="text-[10px] text-muted-foreground">
-              Format: 550e8400-e29b-41d4-a716-446655440000
-            </p>
-          </div>
-
-          {/* Error Message */}
-          {error && (
-            <div className="flex items-start gap-2 p-2 bg-red-50 border border-red-200 rounded text-xs">
-              <AlertCircle className="w-3 h-3 text-red-600 flex-shrink-0 mt-0.5" />
-              <p className="text-red-600">{error}</p>
-            </div>
-          )}
-
-          {/* Success Message */}
-          {showSuccess && (
-            <div className="flex items-center gap-2 p-2 bg-green-50 border border-green-200 rounded text-xs">
-              <Check className="w-3 h-3 text-green-600" />
-              <p className="text-green-600">Access code saved</p>
-            </div>
-          )}
-
-          {/* Info */}
-          <div className="p-2 bg-blue-50 border border-blue-200 rounded text-[10px] text-blue-700">
-            💡 The access code is used to verify your identity. Please keep it safe.
-          </div>
-
-          {/* Actions */}
-          <div className="flex gap-2">
-            <Button
-              onClick={handleClearAccessCode}
-              variant="outline"
-              className="flex-1 h-7 text-xs"
-              size="sm"
-            >
-              clear
-            </Button>
-            <Button
-              onClick={handleSaveAccessCode}
-              disabled={!inputValue.trim()}
-              className="flex-1 h-7 text-xs"
-              size="sm"
-            >
-              save
-            </Button>
-          </div>
-        </div>
-      </PropertyGroup>
     </div>
   );
 }

@@ -54,5 +54,4 @@ export interface ChatState {
   connectionStatus?: 'connected' | 'connecting' | 'reconnecting' | 'disconnected';
   retryCount?: number;
   maxRetries?: number;
-  accessCode?: string; // Access code
 }

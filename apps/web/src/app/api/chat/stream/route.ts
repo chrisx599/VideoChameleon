@@ -26,7 +26,6 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const prompt = searchParams.get('prompt');
     const sessionId = searchParams.get('sessionId');
-    const accessCode = searchParams.get('accessCode');
 
     if (!prompt) {
       return NextResponse.json(
@@ -39,9 +38,6 @@ export async function GET(req: NextRequest) {
     targetUrl.searchParams.set('prompt', prompt);
     if (sessionId) {
       targetUrl.searchParams.set('session_id', sessionId);
-    }
-    if (accessCode) {
-      targetUrl.searchParams.set('accessCode', accessCode);
     }
 
     // Forward request to Python agent's streaming interface, using undici's fetch with long timeout configuration
