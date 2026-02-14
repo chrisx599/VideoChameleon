@@ -122,19 +122,13 @@ export default function TermsPage() {
 
                 <section>
                   <h2 className="text-2xl font-semibold mb-4">
-                    Account and Service
+                    Local Use and Service
                   </h2>
                   <p className="mb-4">
-                    To use certain features, you may create an account:
+                    OpenCut does not require accounts and is designed for
+                    local use. You are responsible for how you use the
+                    software and your data on your device.
                   </p>
-                  <ul className="list-disc pl-6 mb-4 space-y-2">
-                    <li>Provide accurate information when signing up</li>
-                    <li>
-                      Keep your account secure and don't share credentials
-                    </li>
-                    <li>You're responsible for activity under your account</li>
-                    <li>You can delete your account at any time</li>
-                  </ul>
                   <p>
                     OpenCut is provided "as is" without warranties. While we
                     strive for reliability, we can't guarantee uninterrupted
@@ -250,13 +244,9 @@ export default function TermsPage() {
                     You can stop using OpenCut at any time:
                   </p>
                   <ul className="list-disc pl-6 mb-4 space-y-2">
-                    <li>Delete your account through your profile settings</li>
                     <li>Clear your browser data to remove local projects</li>
                     <li>
                       Your content remains yours even if you stop using OpenCut
-                    </li>
-                    <li>
-                      We may suspend accounts for violations of these terms
                     </li>
                   </ul>
                 </section>
@@ -304,7 +294,7 @@ export default function TermsPage() {
                 </section>
 
                 <p className="text-sm text-muted-foreground mt-8 pt-8 border-t border-muted/20">
-                  Last updated: July 14, 2025
+                  Last updated: February 14, 2026
                 </p>
               </CardContent>
             </Card>

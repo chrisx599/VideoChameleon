@@ -70,37 +70,18 @@ export default function PrivacyPage() {
 
                 <section>
                   <h2 className="text-2xl font-semibold mb-4">
-                    Account Information
+                    Local-Only Use
                   </h2>
                   <p className="mb-4">
-                    When you create an account, we only collect:
+                    OpenCut does not require accounts. We do not collect
+                    email addresses, profile data, or OAuth information.
                   </p>
-                  <ul className="list-disc pl-6 mb-4 space-y-2">
-                    <li>Email address (for account access)</li>
-                    <li>
-                      Profile information from Google OAuth (if you choose to
-                      sign in with Google)
-                    </li>
-                  </ul>
-                  <p className="mb-4">
+                  <p>
                     <strong>
                       We do NOT store your projects on our servers.
                     </strong>{" "}
                     All project data, including names, thumbnails, and creation
                     dates, is stored locally in your browser using IndexedDB.
-                  </p>
-                  <p>
-                    We use{" "}
-                    <a
-                      href="https://www.better-auth.com"
-                      target="_blank"
-                      rel="noopener"
-                      className="text-primary hover:underline"
-                    >
-                      Better Auth
-                    </a>{" "}
-                    for secure authentication and follow industry-standard
-                    security practices.
                   </p>
                 </section>
 
@@ -136,7 +117,6 @@ export default function PrivacyPage() {
                   <ul className="list-disc pl-6 mb-4 space-y-2">
                     <li>Save your projects locally on your device</li>
                     <li>Remember your editor preferences and settings</li>
-                    <li>Keep you logged in across browser sessions</li>
                   </ul>
                   <p>
                     All data stays on your device and can be cleared at any time
@@ -153,10 +133,6 @@ export default function PrivacyPage() {
                   </p>
                   <ul className="list-disc pl-6 mb-4 space-y-2">
                     <li>
-                      <strong>Google OAuth:</strong> For optional Google sign-in
-                      (governed by Google's privacy policy)
-                    </li>
-                    <li>
                       <strong>Vercel:</strong> For hosting and content delivery
                     </li>
                     <li>
@@ -171,11 +147,8 @@ export default function PrivacyPage() {
                     You have complete control over your data:
                   </p>
                   <ul className="list-disc pl-6 mb-4 space-y-2">
-                    <li>
-                      Delete your account and all associated data at any time
-                    </li>
-                    <li>Export your project data</li>
                     <li>Clear local storage to remove all saved projects</li>
+                    <li>Export your project data</li>
                     <li>Contact us with any privacy concerns</li>
                   </ul>
                 </section>
@@ -240,7 +213,7 @@ export default function PrivacyPage() {
                 </section>
 
                 <p className="text-sm text-muted-foreground mt-8 pt-8 border-t border-muted/20">
-                  Last updated: July 14, 2025
+                  Last updated: February 14, 2026
                 </p>
               </CardContent>
             </Card>
