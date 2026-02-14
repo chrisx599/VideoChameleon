@@ -106,6 +106,29 @@ CREATE TABLE IF NOT EXISTS artifacts (
 );
 CREATE INDEX IF NOT EXISTS idx_artifacts_lookup ON artifacts(project_id, segment_id, clip_id);
 
+CREATE TABLE IF NOT EXISTS asset_index (
+  asset_id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  kind TEXT NOT NULL,                -- video/image/last_frame/etc
+  path TEXT NOT NULL,
+  segment_id TEXT,
+  clip_id TEXT,
+  prompt TEXT,
+  negative_prompt TEXT,
+  caption TEXT,
+  entity_summary TEXT,
+  tags TEXT,
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL,
+  needs_reindex INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_asset_index_project ON asset_index(project_id, created_at);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS asset_index_fts USING fts5(
+  prompt, caption, entity_summary, tags,
+  content='asset_index', content_rowid='rowid'
+);
+
 CREATE TABLE IF NOT EXISTS evals (
   eval_id TEXT PRIMARY KEY,
   clip_id TEXT NOT NULL,
