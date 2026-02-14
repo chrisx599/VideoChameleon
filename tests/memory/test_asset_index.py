@@ -22,3 +22,10 @@ def test_asset_index_upsert_and_fts(tmp_path):
     assert cur.fetchone() is not None
     cur = store.conn.execute("SELECT rowid FROM asset_index_fts WHERE asset_index_fts MATCH 'orange' LIMIT 1")
     assert cur.fetchone() is not None
+
+
+def test_asset_search(tmp_path):
+    store = ProjectMemoryStore.open(project_id="test", db_path=tmp_path / "mem.db")
+    store.upsert_asset_index(kind="image", path="/tmp/a.png", caption="blue house")
+    rows = store.search_assets("blue", limit=5)
+    assert len(rows) >= 1

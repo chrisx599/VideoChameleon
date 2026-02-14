@@ -193,6 +193,9 @@ class ProjectMemoryService:
             return self.store.get_latest_artifact(segment_id=segment_id, kind="last_frame")
         return None
 
+    def search_assets(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        return self.store.search_assets(query=query, limit=limit)
+
     def get_entity_states_at(self, t: float) -> List[Dict[str, Any]]:
         return self.store.get_entity_states_at(t=t)
 

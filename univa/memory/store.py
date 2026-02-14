@@ -617,6 +617,18 @@ class ProjectMemoryStore:
                 self.conn.execute("UPDATE asset_index SET needs_reindex=1 WHERE asset_id=?", (asset_id,))
         return asset_id
 
+    def search_assets(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        cur = self.conn.execute(
+            """
+            SELECT ai.* FROM asset_index_fts fts
+            JOIN asset_index ai ON ai.rowid = fts.rowid
+            WHERE asset_index_fts MATCH ?
+            ORDER BY bm25(fts) LIMIT ?
+            """,
+            (query, int(limit)),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
     # --- artifacts ---
     def add_artifact(
         self,

@@ -287,6 +287,17 @@ def memory_list_artifacts(
     }
 
 
+def memory_search_assets(project_id: str, query: str, limit: int = 10) -> Dict[str, Any]:
+    """
+    Search assets by semantic query (FTS).
+    """
+    return {
+        "project_id": project_id,
+        "query": query,
+        "assets": _svc(project_id).search_assets(query=query, limit=limit),
+    }
+
+
 def memory_get_latest_artifact(
     project_id: str,
     segment_id: str = "",
@@ -367,6 +378,7 @@ def get_memory_tools() -> List[Any]:
         memory_list_evals,
         memory_add_artifact,
         memory_list_artifacts,
+        memory_search_assets,
         memory_get_latest_artifact,
         memory_get_last_frame,
         memory_delete_artifact,
