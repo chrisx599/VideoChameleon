@@ -22,7 +22,6 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     SqliteSaver = None
 
-from univa.memory.tools import get_memory_tools
 from univa.memory.context import build_memory_context, format_memory_context
 from univa.mcp_tools.video_gen import (
     text2video_gen,
@@ -189,7 +188,6 @@ def _trim_messages(messages: Sequence[Any], max_messages: Optional[int]) -> List
 
 class ReActAgent:
     def __init__(self, db_file: str = "react_agent.db"):
-        self.memory_tools = get_memory_tools()
         self.tool_callables = _builtin_tool_callables()
         self.num_history_messages = 10
 
@@ -277,8 +275,6 @@ class ReActAgent:
         tools: List[BaseTool] = []
         for func in self.tool_callables:
             tools.append(self._wrap_callable(func))
-        for func in self.memory_tools:
-            tools.append(self._wrap_callable(func))
         return tools
 
     def _get_available_tools_description(self) -> str:
@@ -337,17 +333,16 @@ class ReActSystem:
         self.db_file = db_file
         self.agent: Optional[ReActAgent] = None
 
-    def _inject_memory_context(
+    def _memory_context_text(
         self,
-        user_request: str,
         project_id: Optional[str] = None,
         t_start: Optional[float] = None,
         t_end: Optional[float] = None,
         pad_sec: float = 8.0,
         max_segments: int = 12,
-    ) -> str:
+    ) -> Optional[str]:
         if not project_id:
-            return user_request
+            return None
         try:
             ctx = build_memory_context(
                 project_id=project_id,
@@ -357,12 +352,68 @@ class ReActSystem:
                 max_segments=max_segments,
             )
             if not (ctx.get("segments") or ctx.get("entity_states_at_center")):
-                return user_request
-            ctx_text = format_memory_context(ctx)
-            return f"{ctx_text}\n\nUSER_REQUEST:\n{user_request}"
+                return None
+            return format_memory_context(ctx)
         except Exception as exc:
             logger.warning(f"Failed to build memory context for project_id={project_id}: {exc}")
+            return None
+
+    async def _collect_recent_tool_summaries(
+        self,
+        session_id: str,
+        limit: int = 5,
+    ) -> List[Dict[str, Any]]:
+        if not self.agent:
+            return []
+        snapshot = await self.agent.get_state(session_id)
+        if not snapshot:
+            return []
+        messages = snapshot.values.get("messages", []) if hasattr(snapshot, "values") else []
+        summaries: List[Dict[str, Any]] = []
+        for msg in reversed(messages):
+            if not isinstance(msg, ToolMessage):
+                continue
+            payload = _normalize_tool_content(msg.content)
+            if payload is None:
+                continue
+            summary = _summarize_tool_result(payload)
+            tool_name = getattr(msg, "name", None)
+            if tool_name:
+                summary = {"tool": tool_name, **summary}
+            if any(summary.get(k) for k in ("output_path", "output_url", "last_frame_path", "clip_id", "segment_id")):
+                summaries.append(summary)
+            if len(summaries) >= limit:
+                break
+        return list(reversed(summaries))
+
+    async def _build_request_with_context(
+        self,
+        session_id: str,
+        user_request: str,
+        project_id: Optional[str] = None,
+        t_start: Optional[float] = None,
+        t_end: Optional[float] = None,
+        pad_sec: float = 8.0,
+        max_segments: int = 12,
+    ) -> str:
+        blocks: List[str] = []
+        mem_text = self._memory_context_text(
+            project_id=project_id,
+            t_start=t_start,
+            t_end=t_end,
+            pad_sec=pad_sec,
+            max_segments=max_segments,
+        )
+        if mem_text:
+            blocks.append(mem_text)
+
+        recent = await self._collect_recent_tool_summaries(session_id)
+        if recent:
+            blocks.append(f"SESSION_TOOL_HISTORY:\n{_safe_json(recent)}")
+
+        if not blocks:
             return user_request
+        return "\n\n".join(blocks) + f"\n\nUSER_REQUEST:\n{user_request}"
     
     async def __aenter__(self):
         self.agent = ReActAgent(f"{self.db_file}.db")
@@ -383,8 +434,8 @@ class ReActSystem:
     ) -> Dict[str, Any]:
         if not self.agent:
             raise RuntimeError("Agent not initialized. Use 'async with' context manager.")
-
-        request_with_ctx = self._inject_memory_context(
+        request_with_ctx = await self._build_request_with_context(
+            session_id=session_id,
             user_request=user_request,
             project_id=project_id,
             t_start=t_start,
@@ -416,7 +467,8 @@ class ReActSystem:
             logger.info(f"[Stream] Starting task stream for session {session_id}")
             yield {'type': 'content', 'content': 'Using ReAct Agent to process request...\n'}
             
-            request_with_ctx = self._inject_memory_context(
+            request_with_ctx = await self._build_request_with_context(
+                session_id=session_id,
                 user_request=user_request,
                 project_id=project_id,
                 t_start=t_start,

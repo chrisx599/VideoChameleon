@@ -150,29 +150,35 @@ def _resolve_segment_id(svc, segment_id: str, t_start: Optional[float], t_end: O
         return None
 
 
-def _save_last_frame_artifact(svc, segment_id: str, clip_id: str, video_path: str) -> Optional[str]:
-    if not svc:
-        return None
+def _extract_last_frame(video_path: str) -> Optional[str]:
     if not video_path:
         return None
     try:
-        last_frame_path = save_last_frame_decord(video_path)
+        return save_last_frame_decord(video_path)
     except Exception as exc:
         logger.warning(f"Failed to extract last frame: {exc}")
         return None
-    if not last_frame_path:
-        return None
+
+
+def _maybe_store_last_frame(
+    svc,
+    segment_id: Optional[str],
+    clip_id: Optional[str],
+    last_frame_path: Optional[str],
+    video_path: Optional[str],
+) -> None:
+    if not svc or not last_frame_path:
+        return
     try:
         svc.add_artifact(
             kind="last_frame",
             path=last_frame_path,
-            segment_id=segment_id,
-            clip_id=clip_id,
+            segment_id=segment_id or None,
+            clip_id=clip_id or None,
             meta={"source": "video_gen", "video_path": video_path},
         )
     except Exception as exc:
         logger.warning(f"Failed to save last frame artifact: {exc}")
-    return last_frame_path
 
 async def text2video_gen(
     prompt: str,
@@ -219,6 +225,12 @@ async def text2video_gen(
         save_path = _make_save_path(prompt, ext=".mp4")
         return_dict = text_to_video_generate(api_key, prompt, save_path=save_path)
 
+        last_frame_path = None
+        if return_dict.get("success") and save_last_frame:
+            last_frame_path = _extract_last_frame(return_dict.get("output_path"))
+            if last_frame_path:
+                return_dict["last_frame_path"] = last_frame_path
+
         svc = _maybe_open_memory(project_id)
         try:
             if svc and return_dict.get("success"):
@@ -239,15 +251,14 @@ async def text2video_gen(
                     if clip:
                         return_dict["segment_id"] = seg_id
                         return_dict["clip_id"] = clip.get("clip_id")
-                        if save_last_frame:
-                            last_frame_path = _save_last_frame_artifact(
+                        if save_last_frame and last_frame_path:
+                            _maybe_store_last_frame(
                                 svc,
                                 segment_id=seg_id,
                                 clip_id=clip.get("clip_id"),
+                                last_frame_path=last_frame_path,
                                 video_path=return_dict.get("output_path"),
                             )
-                            if last_frame_path:
-                                return_dict["last_frame_path"] = last_frame_path
         finally:
             if svc:
                 svc.close()
@@ -309,6 +320,12 @@ async def image2video_gen(
         save_path = _make_save_path(prompt, ext=".mp4")
         return_dict = image_to_video_generate(api_key, prompt, image_path, save_path=save_path)
 
+        last_frame_path = None
+        if return_dict.get("success") and save_last_frame:
+            last_frame_path = _extract_last_frame(return_dict.get("output_path"))
+            if last_frame_path:
+                return_dict["last_frame_path"] = last_frame_path
+
         svc = _maybe_open_memory(project_id)
         try:
             if svc and return_dict.get("success"):
@@ -329,15 +346,14 @@ async def image2video_gen(
                     if clip:
                         return_dict["segment_id"] = seg_id
                         return_dict["clip_id"] = clip.get("clip_id")
-                        if save_last_frame:
-                            last_frame_path = _save_last_frame_artifact(
+                        if save_last_frame and last_frame_path:
+                            _maybe_store_last_frame(
                                 svc,
                                 segment_id=seg_id,
                                 clip_id=clip.get("clip_id"),
+                                last_frame_path=last_frame_path,
                                 video_path=return_dict.get("output_path"),
                             )
-                            if last_frame_path:
-                                return_dict["last_frame_path"] = last_frame_path
         finally:
             if svc:
                 svc.close()
@@ -402,6 +418,12 @@ async def frame2frame_video_gen(
         save_path = _make_save_path(prompt, ext=".mp4")
         return_dict = hailuo_i2v_pro(api_key, prompt, first_frame_path, last_frame_path, save_path=save_path)
 
+        last_frame_path_out = None
+        if return_dict.get("success") and save_last_frame:
+            last_frame_path_out = _extract_last_frame(return_dict.get("output_path"))
+            if last_frame_path_out:
+                return_dict["last_frame_path"] = last_frame_path_out
+
         svc = _maybe_open_memory(project_id)
         try:
             if svc and return_dict.get("success"):
@@ -426,15 +448,14 @@ async def frame2frame_video_gen(
                     if clip:
                         return_dict["segment_id"] = seg_id
                         return_dict["clip_id"] = clip.get("clip_id")
-                        if save_last_frame:
-                            last_frame_path_out = _save_last_frame_artifact(
+                        if save_last_frame and last_frame_path_out:
+                            _maybe_store_last_frame(
                                 svc,
                                 segment_id=seg_id,
                                 clip_id=clip.get("clip_id"),
+                                last_frame_path=last_frame_path_out,
                                 video_path=return_dict.get("output_path"),
                             )
-                            if last_frame_path_out:
-                                return_dict["last_frame_path"] = last_frame_path_out
         finally:
             if svc:
                 svc.close()
@@ -475,4 +496,3 @@ async def merge2videos(video_paths: list[str]):
         output_path=video_path,
         message="Videos merged successfully."
     )
-
