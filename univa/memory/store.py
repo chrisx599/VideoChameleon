@@ -125,8 +125,7 @@ CREATE TABLE IF NOT EXISTS asset_index (
 CREATE INDEX IF NOT EXISTS idx_asset_index_project ON asset_index(project_id, created_at);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS asset_index_fts USING fts5(
-  prompt, caption, entity_summary, tags,
-  content='asset_index', content_rowid='rowid'
+  prompt, caption, entity_summary, tags
 );
 
 CREATE TABLE IF NOT EXISTS evals (
@@ -180,6 +179,21 @@ class ProjectMemoryStore:
         self.conn.executescript(SCHEMA_SQL)
         # Schema versioning for future migrations.
         self.conn.execute("INSERT OR IGNORE INTO meta(key, value) VALUES(?, ?)", ("schema_version", "1"))
+        # Migrate external-content FTS to contentless FTS if needed.
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='asset_index_fts'"
+        ).fetchone()
+        if row and row[0] and "content='asset_index'" in row[0]:
+            self.conn.execute("DROP TABLE IF EXISTS asset_index_fts")
+            self.conn.execute(
+                "CREATE VIRTUAL TABLE asset_index_fts USING fts5(prompt, caption, entity_summary, tags)"
+            )
+            self.conn.execute(
+                """
+                INSERT INTO asset_index_fts(rowid, prompt, caption, entity_summary, tags)
+                SELECT rowid, prompt, caption, entity_summary, tags FROM asset_index
+                """
+            )
 
     def _now(self) -> float:
         return time.time()
@@ -618,16 +632,27 @@ class ProjectMemoryStore:
         return asset_id
 
     def search_assets(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
-        cur = self.conn.execute(
-            """
-            SELECT ai.* FROM asset_index_fts fts
-            JOIN asset_index ai ON ai.rowid = fts.rowid
-            WHERE asset_index_fts MATCH ?
-            ORDER BY bm25(fts) LIMIT ?
-            """,
-            (query, int(limit)),
-        )
-        return [dict(r) for r in cur.fetchall()]
+        sql = """
+        SELECT ai.* FROM asset_index_fts fts
+        JOIN asset_index ai ON ai.rowid = fts.rowid
+        WHERE asset_index_fts MATCH ?
+        ORDER BY bm25(asset_index_fts) LIMIT ?
+        """
+        try:
+            cur = self.conn.execute(sql, (query, int(limit)))
+        except sqlite3.OperationalError:
+            safe = query.replace('"', '""')
+            cur = self.conn.execute(sql, (f"\"{safe}\"", int(limit)))
+        rows = [dict(r) for r in cur.fetchall()]
+        if rows:
+            return rows
+        if "/" in query or "." in query:
+            cur = self.conn.execute(
+                "SELECT * FROM asset_index WHERE path LIKE ? ORDER BY created_at DESC LIMIT ?",
+                (f"%{query}%", int(limit)),
+            )
+            return [dict(r) for r in cur.fetchall()]
+        return rows
 
     def update_asset_caption(
         self,

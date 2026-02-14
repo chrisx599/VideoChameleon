@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .service import ProjectMemoryService
@@ -13,8 +14,9 @@ def build_memory_context(
     t_end: Optional[float] = None,
     pad_sec: float = 8.0,
     max_segments: int = 12,
+    db_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    svc = ProjectMemoryService.open(project_id=project_id)
+    svc = ProjectMemoryService.open(project_id=project_id, db_path=db_path)
     try:
         assets: List[Dict[str, Any]] = []
         if query:
