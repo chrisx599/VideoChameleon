@@ -8,6 +8,7 @@ from .service import ProjectMemoryService
 
 def build_memory_context(
     project_id: str,
+    query: Optional[str] = None,
     t_start: Optional[float] = None,
     t_end: Optional[float] = None,
     pad_sec: float = 8.0,
@@ -15,6 +16,9 @@ def build_memory_context(
 ) -> Dict[str, Any]:
     svc = ProjectMemoryService.open(project_id=project_id)
     try:
+        assets: List[Dict[str, Any]] = []
+        if query:
+            assets = svc.search_assets(query=query, limit=12)
         if t_start is not None and t_end is not None:
             ctx = svc.get_context_window(t_start=t_start, t_end=t_end, pad_sec=pad_sec)
             segments = ctx.get("segments", [])
@@ -50,6 +54,7 @@ def build_memory_context(
             if art:
                 last_frames[seg_id] = art
         ctx["last_frames_by_segment"] = last_frames
+        ctx["assets"] = assets
         return ctx
     finally:
         svc.close()
@@ -64,6 +69,7 @@ def format_memory_context(ctx: Dict[str, Any]) -> str:
     beats = ctx.get("beats") or []
     entity_states = ctx.get("entity_states_at_center") or []
     last_frames = ctx.get("last_frames_by_segment") or {}
+    assets = ctx.get("assets") or []
 
     lines: List[str] = []
     lines.append("MEMORY_CONTEXT")
@@ -100,5 +106,12 @@ def format_memory_context(ctx: Dict[str, Any]) -> str:
         for es in entity_states:
             state = es.get("state") or {}
             lines.append(f"- entity={es.get('entity_name')} t=[{es.get('t_start')},{es.get('t_end')}] state={json.dumps(state, ensure_ascii=True)}")
+
+    if assets:
+        lines.append("assets:")
+        for asset in assets:
+            lines.append(
+                f"- kind={asset.get('kind')} path={asset.get('path')} clip_id={asset.get('clip_id')} segment_id={asset.get('segment_id')}"
+            )
 
     return "\n".join(lines)
