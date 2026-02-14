@@ -666,8 +666,6 @@ async def main():
         from rich.panel import Panel
         from rich.live import Live
         from rich.spinner import Spinner
-        from rich.text import Text
-        from rich.json import JSON
     except ImportError:
         print("Error: 'rich' library not found. Please install it with 'pip install rich'.")
         return
@@ -849,14 +847,14 @@ async def main():
                 # Renderables accumulator for the chat history of this turn
                 renderables = []
                 current_text = ""
-                active_tool = None
+                status_text = "Thinking..."
                 
                 def generate_group():
                     items = list(renderables)
                     if current_text:
                         items.append(Markdown(current_text))
-                    if active_tool:
-                        items.append(active_tool)
+                    if status_text:
+                        items.append(Spinner("dots", text=status_text, style="cyan"))
                     return Group(*items)
 
                 with Live(generate_group(), console=console, refresh_per_second=10) as live:
@@ -876,36 +874,21 @@ async def main():
                         elif event['type'] == 'tool_start':
                             tool_name = event.get('name', 'Unknown Tool')
                             tool_args = event.get('args', {})
-                            # Show spinner
-                            active_tool = Spinner("dots", text=f"Running [bold cyan]{tool_name}[/]...", style="cyan")
+                            status_text = f"Running {tool_name}..."
+                            with log_context(tool=tool_name):
+                                logger.info("tool_start | args=%s", _safe_json(tool_args))
                             live.update(generate_group())
                         
                         elif event['type'] == 'tool_end':
-                            # Convert output to a nice panel
                             tool_name = event.get('name', 'Tool')
                             output = event.get('output', {})
-                            
-                            # Add current text to renderables so it "commits" before the tool output
-                            if current_text:
-                                renderables.append(Markdown(current_text))
-                                current_text = ""
-                            
-                            # Create a panel for the tool result
-                            # Try to format JSON if possible, otherwise string
-                            try:
-                                json_str = json.dumps(output, indent=2)
-                                content = JSON(json_str)
-                            except Exception:
-                                content = str(output)
-                                
-                            panel = Panel(
-                                content,
-                                title=f"[bold magenta]Tool Result: {tool_name}[/]",
-                                border_style="magenta",
-                                expand=False
-                            )
-                            renderables.append(panel)
-                            active_tool = None
+                            status_text = "Thinking..."
+                            with log_context(tool=tool_name):
+                                logger.info("tool_end | output=%s", _safe_json(output))
+                            live.update(generate_group())
+
+                        elif event['type'] == 'finish':
+                            status_text = None
                             live.update(generate_group())
 
                         elif event['type'] == 'error':
