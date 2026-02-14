@@ -370,6 +370,14 @@ def memory_get_context_window(project_id: str, t_start: float, t_end: float, pad
     return _svc(project_id).get_context_window(t_start=float(t_start), t_end=float(t_end), pad_sec=float(pad_sec))
 
 
+def memory_backfill_asset_index(project_id: str) -> Dict[str, Any]:
+    """
+    Backfill asset index rows from existing artifacts.
+    """
+    count = _svc(project_id).backfill_asset_index()
+    return {"project_id": project_id, "indexed": count}
+
+
 def get_memory_tools() -> List[Any]:
     """
     Convenience for agent wiring: return a list of callables exposed as tools.
@@ -403,4 +411,5 @@ def get_memory_tools() -> List[Any]:
         memory_get_last_frame,
         memory_delete_artifact,
         memory_get_context_window,
+        memory_backfill_asset_index,
     ]

@@ -171,6 +171,22 @@ class ProjectMemoryService:
     ) -> List[Dict[str, Any]]:
         return self.store.list_artifacts(segment_id=segment_id, clip_id=clip_id, kind=kind)
 
+    def backfill_asset_index(self) -> int:
+        artifacts = self.store.list_artifacts()
+        count = 0
+        for art in artifacts:
+            kind = art.get("kind")
+            if kind not in {"video", "image", "last_frame"}:
+                continue
+            self.store.upsert_asset_index(
+                kind=kind,
+                path=art.get("path"),
+                segment_id=art.get("segment_id"),
+                clip_id=art.get("clip_id"),
+            )
+            count += 1
+        return count
+
     def delete_artifact(self, artifact_id: str) -> bool:
         return self.store.delete_artifact(artifact_id=artifact_id)
 
