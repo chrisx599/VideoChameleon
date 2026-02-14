@@ -1,8 +1,8 @@
-import os
 import logging
 from pydantic import BaseModel
 from typing import Optional, List, Any
 
+from univa.utils.logging_setup import configure_logging
 
 class ToolResponse(BaseModel):
     success: bool
@@ -14,16 +14,6 @@ class ToolResponse(BaseModel):
         extra = "allow"
 
 
-def setup_logger(name: str, log_dir: str, log_file: str) -> logging.Logger:
-    os.makedirs(log_dir, exist_ok=True)
-    log_file_path = os.path.join(log_dir, log_file)
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.FileHandler(log_file_path),
-            logging.StreamHandler()
-        ]
-    )
+def setup_logger(name: str) -> logging.Logger:
+    configure_logging()
     return logging.getLogger(name)

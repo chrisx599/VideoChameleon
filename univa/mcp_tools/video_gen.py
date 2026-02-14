@@ -41,7 +41,7 @@ def _get_wavespeed_api_key() -> str:
     return key
 
 # Configure logging
-logger = setup_logger(__name__, "logs/mcp_tools", "video_gen.log")
+logger = setup_logger(__name__)
 logger.info(f"Loaded video_gen_config: {video_gen_config}")
 
 try:

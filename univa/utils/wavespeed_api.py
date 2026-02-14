@@ -6,8 +6,7 @@ import os
 import base64
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 # from dotenv import load_dotenv
 

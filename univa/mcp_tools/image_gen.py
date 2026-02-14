@@ -27,7 +27,7 @@ def _get_wavespeed_api_key() -> str:
     return key
 
 # Configure logging
-logger = setup_logger(__name__, "logs/mcp_tools", "image_gen.log")
+logger = setup_logger(__name__)
 
 
 
@@ -161,5 +161,4 @@ def sequential_image_gen(prompt: str, images: list[str], images_num: int = 2) ->
             success=False,
             error=f"Error during sequential image editing: {str(e)}"
         )
-
 

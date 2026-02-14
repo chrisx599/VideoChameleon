@@ -19,7 +19,7 @@ with open(config_path, "r") as f:
 video_understanding_config = config.get('video_understanding', {})
 
 # Configure logging
-logger = setup_logger(__name__, "logs/mcp_tools", "video_understanding.log")
+logger = setup_logger(__name__)
 logger.info(f"Loaded video_understanding_config: {video_understanding_config}")
 
 # Tool function (direct, no MCP server)
