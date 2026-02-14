@@ -197,6 +197,30 @@ class ProjectMemoryStore:
         except Exception:
             return s
 
+    def _asset_id(self, kind: str, path: str) -> str:
+        key = f"{self.project_id}|{kind}|{path}"
+        return sha1(key.encode("utf-8")).hexdigest()
+
+    def _update_asset_fts(
+        self,
+        rowid: int,
+        prompt: Optional[str],
+        caption: Optional[str],
+        entity_summary: Optional[str],
+        tags: Optional[str],
+    ) -> None:
+        self.conn.execute("DELETE FROM asset_index_fts WHERE rowid=?", (rowid,))
+        self.conn.execute(
+            "INSERT INTO asset_index_fts(rowid, prompt, caption, entity_summary, tags) VALUES(?, ?, ?, ?, ?)",
+            (
+                rowid,
+                prompt or "",
+                caption or "",
+                entity_summary or "",
+                tags or "",
+            ),
+        )
+
     # --- segments ---
     def get_segment(self, segment_id: str) -> Optional[Dict[str, Any]]:
         cur = self.conn.execute(
@@ -530,6 +554,68 @@ class ProjectMemoryStore:
             d.pop("state_json", None)
             out.append(d)
         return out
+
+    # --- asset index ---
+    def upsert_asset_index(
+        self,
+        kind: str,
+        path: str,
+        segment_id: Optional[str] = None,
+        clip_id: Optional[str] = None,
+        prompt: Optional[str] = None,
+        negative_prompt: Optional[str] = None,
+        caption: Optional[str] = None,
+        entity_summary: Optional[str] = None,
+        tags: Optional[str] = None,
+    ) -> str:
+        asset_id = self._asset_id(kind=kind, path=path)
+        ts = self._now()
+        self.conn.execute(
+            """
+            INSERT INTO asset_index(
+              asset_id, project_id, kind, path, segment_id, clip_id, prompt, negative_prompt,
+              caption, entity_summary, tags, created_at, updated_at
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(asset_id)
+            DO UPDATE SET prompt=excluded.prompt,
+                          negative_prompt=excluded.negative_prompt,
+                          caption=excluded.caption,
+                          entity_summary=excluded.entity_summary,
+                          tags=excluded.tags,
+                          updated_at=excluded.updated_at
+            """,
+            (
+                asset_id,
+                self.project_id,
+                kind,
+                path,
+                segment_id,
+                clip_id,
+                prompt,
+                negative_prompt,
+                caption,
+                entity_summary,
+                tags,
+                ts,
+                ts,
+            ),
+        )
+        cur = self.conn.execute("SELECT rowid FROM asset_index WHERE asset_id=?", (asset_id,))
+        row = cur.fetchone()
+        if row:
+            try:
+                self._update_asset_fts(
+                    int(row["rowid"]),
+                    prompt=prompt,
+                    caption=caption,
+                    entity_summary=entity_summary,
+                    tags=tags,
+                )
+                self.conn.execute("UPDATE asset_index SET needs_reindex=0 WHERE asset_id=?", (asset_id,))
+            except Exception:
+                self.conn.execute("UPDATE asset_index SET needs_reindex=1 WHERE asset_id=?", (asset_id,))
+        return asset_id
 
     # --- artifacts ---
     def add_artifact(
