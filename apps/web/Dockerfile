@@ -11,22 +11,18 @@ COPY turbo.json turbo.json
 
 COPY apps/web/package.json apps/web/package.json
 COPY packages/db/package.json packages/db/package.json
-COPY packages/auth/package.json packages/auth/package.json
 
 RUN bun install
 
 COPY apps/web/ apps/web/
 COPY packages/db/ packages/db/
-COPY packages/auth/ packages/auth/
 
 ENV NODE_ENV production
 ENV NEXT_TELEMETRY_DISABLED 1
 # Set build-time environment variables for validation
 ENV DATABASE_URL="postgresql://opencut:opencutthegoat@localhost:5432/opencut"
-ENV BETTER_AUTH_SECRET="build-time-secret"
 ENV UPSTASH_REDIS_REST_URL="http://localhost:8079"
 ENV UPSTASH_REDIS_REST_TOKEN="example_token"
-ENV NEXT_PUBLIC_BETTER_AUTH_URL="http://localhost:3000"
 
 WORKDIR /app/apps/web
 RUN bun run build

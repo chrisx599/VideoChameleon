@@ -1,11 +1,10 @@
 import { vercel } from "@t3-oss/env-core/presets-zod";
 import { createEnv } from "@t3-oss/env-nextjs";
 import { z } from "zod";
-import { keys as auth } from "@opencut/auth/keys";
 import { keys as db } from "@opencut/db/keys";
 
 export const env = createEnv({
-  extends: [vercel(), auth(), db()],
+  extends: [vercel(), db()],
   server: {
     ANALYZE: z.string().optional(),
     // Added by Vercel
