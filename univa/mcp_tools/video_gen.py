@@ -51,6 +51,7 @@ except Exception:
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CACHE_TTL_SEC = 180
+_DEFAULT_SEGMENT_DURATION_SEC = 5.0
 _RECENT_RESULTS: Dict[Tuple, Dict] = {}
 
 
@@ -130,6 +131,21 @@ def _maybe_open_memory(project_id: Optional[str]):
         return None
 
 
+def _auto_segment_range(svc) -> Optional[tuple[float, float]]:
+    if not svc:
+        return None
+    try:
+        segments = svc.list_segments()
+    except Exception:
+        segments = []
+    if segments:
+        last_end = max(float(seg.get("t_end", 0.0)) for seg in segments)
+        t_start = last_end
+    else:
+        t_start = 0.0
+    return t_start, t_start + _DEFAULT_SEGMENT_DURATION_SEC
+
+
 def _resolve_segment_id(svc, segment_id: str, t_start: Optional[float], t_end: Optional[float], kind: str, status: str) -> Optional[str]:
     if not svc:
         return None
@@ -141,6 +157,14 @@ def _resolve_segment_id(svc, segment_id: str, t_start: Optional[float], t_end: O
         if existing:
             return segment_id
         logger.warning(f"segment_id not found in memory: {segment_id}")
+    if t_start is None and t_end is None:
+        auto_range = _auto_segment_range(svc)
+        if auto_range:
+            t_start, t_end = auto_range
+    elif t_start is None and t_end is not None:
+        t_start = max(0.0, float(t_end) - _DEFAULT_SEGMENT_DURATION_SEC)
+    elif t_start is not None and t_end is None:
+        t_end = float(t_start) + _DEFAULT_SEGMENT_DURATION_SEC
     if t_start is None or t_end is None:
         return None
     try:
