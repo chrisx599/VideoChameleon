@@ -57,3 +57,29 @@ def test_prepare_params_uploads_local_file(tmp_path):
         prepared = adapter.prepare_params(params, upload_media=upload)
         assert prepared["image"].startswith("https://")
         upload.assert_called_once()
+
+
+def test_run_and_poll_result_uses_result_url():
+    client = WaveSpeedClient("key")
+
+    with patch("univa.utils.wavespeed_universal.requests.post") as post, \
+         patch("univa.utils.wavespeed_universal.requests.get") as get:
+        post.return_value = _mock_resp({"id": "task1", "urls": {"get": "https://api.wavespeed.ai/api/v3/predictions/task1/result"}})
+        get.return_value = _mock_resp({"status": "completed", "outputs": ["https://cdn.example.com/out.mp4"]})
+
+        data = client.run_model("model-x", {"prompt": "hi"})
+        result = client.poll_result(data["id"], result_url_hint=data.get("result_url"), timeout_sec=1, poll_interval_sec=0)
+        assert result["outputs"][0].endswith("out.mp4")
+
+
+def test_run_and_poll_result_fallbacks_to_prediction_url():
+    client = WaveSpeedClient("key")
+
+    with patch("univa.utils.wavespeed_universal.requests.post") as post, \
+         patch("univa.utils.wavespeed_universal.requests.get") as get:
+        post.return_value = _mock_resp({"id": "task2"})
+        get.return_value = _mock_resp({"status": "completed", "outputs": ["https://cdn.example.com/out.png"]})
+
+        data = client.run_model("model-y", {"prompt": "hi"})
+        result = client.poll_result(data["id"], result_url_hint=None, timeout_sec=1, poll_interval_sec=0)
+        assert result["outputs"][0].endswith("out.png")

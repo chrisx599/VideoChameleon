@@ -52,6 +52,43 @@ class WaveSpeedClient:
         data = resp.json().get("data", {})
         return data.get("url") or data.get("download_url")
 
+    def run_model(self, model_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        url = f"{self.base_url}/{model_id}"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
+        resp = requests.post(url, headers=headers, json=payload)
+        if resp.status_code != 200:
+            raise RuntimeError(f"Submit failed: {resp.status_code} {resp.text}")
+        data = resp.json().get("data", {})
+        if isinstance(data.get("urls"), dict):
+            data["result_url"] = data["urls"].get("get")
+        return data
+
+    def poll_result(
+        self,
+        task_id: str,
+        result_url_hint: Optional[str] = None,
+        timeout_sec: int = 300,
+        poll_interval_sec: int = 2,
+    ) -> Dict[str, Any]:
+        deadline = time.time() + timeout_sec
+        url = result_url_hint or f"{self.base_url}/predictions/{task_id}"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        while time.time() < deadline:
+            resp = requests.get(url, headers=headers)
+            if resp.status_code != 200:
+                raise RuntimeError(f"Poll failed: {resp.status_code} {resp.text}")
+            data = resp.json().get("data", {})
+            status = data.get("status")
+            if status == "completed":
+                return data
+            if status == "failed":
+                raise RuntimeError(f"Task failed: {data.get('error')}")
+            time.sleep(poll_interval_sec)
+        raise TimeoutError(f"Timed out waiting for task {task_id}")
+
 
 class SchemaAdapter:
     def __init__(self, schema: Optional[dict]):
