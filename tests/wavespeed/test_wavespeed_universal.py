@@ -38,3 +38,22 @@ def test_schema_validation_required_and_types():
     with pytest.raises(SchemaValidationError):
         adapter.validate({"num_images": 1})
     adapter.validate({"prompt": "hi", "num_images": 2})
+
+
+def test_prepare_params_uploads_local_file(tmp_path):
+    local = tmp_path / "img.jpg"
+    local.write_bytes(b"x")
+
+    schema = {
+        "type": "object",
+        "properties": {"image": {"type": "string"}},
+        "required": ["image"],
+    }
+
+    with patch("univa.utils.wavespeed_universal.WaveSpeedClient.upload_media") as upload:
+        upload.return_value = "https://cdn.example.com/img.jpg"
+        adapter = SchemaAdapter(schema)
+        params = {"image": str(local)}
+        prepared = adapter.prepare_params(params, upload_media=upload)
+        assert prepared["image"].startswith("https://")
+        upload.assert_called_once()

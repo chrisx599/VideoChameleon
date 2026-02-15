@@ -1,6 +1,7 @@
+import os
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 import requests
 
@@ -33,6 +34,24 @@ class WaveSpeedClient:
         self._models = ModelCache(data=data, ts=time.time())
         return data
 
+    def upload_media(self, path: str) -> str:
+        url = f"{self.base_url}/media/upload/binary"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        with open(path, "rb") as f:
+            files = {"file": f}
+            resp = requests.post(url, headers=headers, files=files)
+        if resp.status_code == 200:
+            data = resp.json().get("data", {})
+            return data.get("download_url") or data.get("url")
+        url = f"{self.base_url}/upload"
+        with open(path, "rb") as f:
+            files = {"file": f}
+            resp = requests.post(url, headers=headers, files=files)
+        if resp.status_code != 200:
+            raise RuntimeError(f"Upload failed: {resp.status_code} {resp.text}")
+        data = resp.json().get("data", {})
+        return data.get("url") or data.get("download_url")
+
 
 class SchemaAdapter:
     def __init__(self, schema: Optional[dict]):
@@ -51,6 +70,16 @@ class SchemaAdapter:
             if expected and not _matches_type(params[key], expected):
                 raise SchemaValidationError(f"Field '{key}' should be {expected}")
 
+    def prepare_params(self, params: Dict[str, Any], upload_media: Callable[[str], str]) -> Dict[str, Any]:
+        self.validate(params)
+        updated = dict(params)
+        for key, value in list(updated.items()):
+            if _is_local_path(value):
+                updated[key] = upload_media(value)
+            elif isinstance(value, list) and value and all(_is_local_path(v) for v in value):
+                updated[key] = [upload_media(v) for v in value]
+        return updated
+
 
 def _matches_type(value: Any, expected: str) -> bool:
     if expected == "string":
@@ -66,3 +95,7 @@ def _matches_type(value: Any, expected: str) -> bool:
     if expected == "object":
         return isinstance(value, dict)
     return True
+
+
+def _is_local_path(value: Any) -> bool:
+    return isinstance(value, str) and not value.startswith("http") and os.path.exists(value)
