@@ -136,3 +136,33 @@ def _matches_type(value: Any, expected: str) -> bool:
 
 def _is_local_path(value: Any) -> bool:
     return isinstance(value, str) and not value.startswith("http") and os.path.exists(value)
+
+
+class UniversalRunner:
+    def __init__(self, api_key: str, cache_ttl_sec: int = 180, poll_interval_sec: int = 2):
+        self.client = WaveSpeedClient(api_key, cache_ttl_sec=cache_ttl_sec)
+        self.poll_interval_sec = poll_interval_sec
+
+    def run(
+        self,
+        model_id: str,
+        params: Dict[str, Any],
+        save_path: Optional[str] = None,
+        timeout_sec: int = 300,
+    ) -> Dict[str, Any]:
+        models = {m.get("id"): m for m in self.client.list_models()}
+        if model_id not in models:
+            raise ValueError(f"Unknown model_id: {model_id}")
+        schema = models[model_id].get("api_schema")
+        adapter = SchemaAdapter(schema)
+        prepared = adapter.prepare_params(params, upload_media=self.client.upload_media)
+        task = self.client.run_model(model_id, prepared)
+        result = self.client.poll_result(
+            task["id"],
+            result_url_hint=task.get("result_url"),
+            timeout_sec=timeout_sec,
+            poll_interval_sec=self.poll_interval_sec,
+        )
+        outputs = result.get("outputs") or []
+        output_url = outputs[0] if outputs else None
+        return {"output_url": output_url, "content": result}

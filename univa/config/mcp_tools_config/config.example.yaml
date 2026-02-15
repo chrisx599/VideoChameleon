@@ -21,10 +21,14 @@ video_understanding:
 llm:
   model: "gpt-5-2025-08-07"
 
+wavespeed:
+  cache_ttl_sec: 180
+  poll_interval_sec: 2
+  timeout_sec: 300
+
 save_service:
   base_output_path: "results/video"
   naming_pattern: "{timestamp}_{file_type}_{description}_{index:03d}"
   cleanup_policy:
     max_age_days: 30
     max_size_gb: 100
-
