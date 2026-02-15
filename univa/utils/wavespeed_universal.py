@@ -1,6 +1,7 @@
 import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 import requests
@@ -165,4 +166,20 @@ class UniversalRunner:
         )
         outputs = result.get("outputs") or []
         output_url = outputs[0] if outputs else None
-        return {"output_url": output_url, "content": result}
+        output_path = None
+        if output_url and save_path:
+            output_path = self._download_output(output_url, save_path=save_path)
+        return {"output_url": output_url, "output_path": output_path, "content": result}
+
+    def _download_output(self, url: str, save_path: Optional[str] = None) -> Optional[str]:
+        if not url:
+            return None
+        path = Path(save_path) if save_path else Path("results/wavespeed") / Path(url).name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        resp = requests.get(url, stream=True)
+        if resp.status_code != 200:
+            raise RuntimeError(f"Download failed: {resp.status_code} {resp.text}")
+        with open(path, "wb") as f:
+            for chunk in resp.iter_content(8192):
+                f.write(chunk)
+        return str(path)

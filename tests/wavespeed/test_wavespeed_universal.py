@@ -2,7 +2,12 @@ import time
 from unittest.mock import patch, MagicMock
 import pytest
 
-from univa.utils.wavespeed_universal import WaveSpeedClient, SchemaAdapter, SchemaValidationError
+from univa.utils.wavespeed_universal import (
+    WaveSpeedClient,
+    SchemaAdapter,
+    SchemaValidationError,
+    UniversalRunner,
+)
 
 
 def _mock_resp(data, status=200):
@@ -83,3 +88,36 @@ def test_run_and_poll_result_fallbacks_to_prediction_url():
         data = client.run_model("model-y", {"prompt": "hi"})
         result = client.poll_result(data["id"], result_url_hint=None, timeout_sec=1, poll_interval_sec=0)
         assert result["outputs"][0].endswith("out.png")
+
+
+def test_download_output_to_save_path(tmp_path):
+    runner = UniversalRunner(api_key="key")
+    url = "https://cdn.example.com/out.mp4"
+
+    with patch("univa.utils.wavespeed_universal.requests.get") as get:
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.iter_content.return_value = [b"data"]
+        get.return_value = resp
+        out = runner._download_output(url, save_path=str(tmp_path / "out.mp4"))
+        assert out.endswith("out.mp4")
+
+
+def test_runner_returns_output_path_when_save_path_provided():
+    runner = UniversalRunner(api_key="key")
+
+    with patch.object(runner.client, "list_models") as list_models, \
+         patch.object(runner.client, "run_model") as run_model, \
+         patch.object(runner.client, "poll_result") as poll_result, \
+         patch.object(runner, "_download_output") as download:
+        list_models.return_value = [{
+            "id": "model-1",
+            "api_schema": {"type": "object", "properties": {"prompt": {"type": "string"}}, "required": ["prompt"]},
+        }]
+        run_model.return_value = {"id": "task-1"}
+        poll_result.return_value = {"status": "completed", "outputs": ["https://cdn.example.com/out.mp4"]}
+        download.return_value = "saved.mp4"
+
+        result = runner.run("model-1", {"prompt": "hi"}, save_path="saved.mp4", timeout_sec=1)
+        assert result["output_path"] == "saved.mp4"
+        download.assert_called_once_with("https://cdn.example.com/out.mp4", save_path="saved.mp4")
