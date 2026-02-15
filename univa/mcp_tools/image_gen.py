@@ -1,6 +1,7 @@
 import base64
 import yaml
 import os
+from pathlib import Path
 from datetime import datetime
 
 from univa.mcp_tools.base import ToolResponse, setup_logger
@@ -18,6 +19,15 @@ with open(config_path, "r") as f:
     config = yaml.safe_load(f)
 
 image_gen_config = config.get('image_gen', {})
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _resolve_output_dir(base_output_path: str) -> Path:
+    path = Path(base_output_path)
+    if not path.is_absolute():
+        path = _REPO_ROOT / path
+    return path
 
 def _get_wavespeed_api_key() -> str:
     """API keys must come from environment variables (.env)."""
@@ -53,8 +63,9 @@ def text2image_generate(prompt: str)-> ToolResponse:
         image_url = text_to_image_generate(api_key, prompt)
         _time = datetime.now().strftime("%m%d%H%M%S")
         base_output_path = image_gen_config.get("base_output_path", "results/image")
-        os.makedirs(base_output_path, exist_ok=True)
-        image_save_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), f"{base_output_path}/{_time}_{prompt[:30].replace(' ', '_')}.jpg")
+        output_dir = _resolve_output_dir(base_output_path)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        image_save_path = str(output_dir / f"{_time}_{prompt[:30].replace(' ', '_')}.jpg")
 
     logger.info(f"Image URL: {image_url}")
     download_image(image_url, save_path=image_save_path)
@@ -161,4 +172,3 @@ def sequential_image_gen(prompt: str, images: list[str], images_num: int = 2) ->
             success=False,
             error=f"Error during sequential image editing: {str(e)}"
         )
-
